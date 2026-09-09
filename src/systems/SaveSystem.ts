@@ -2,7 +2,7 @@ import { SAVE_KEY } from '../config/gameConfig';
 import { FIRST_STAGE_ID } from '../data/stages';
 import type { EquipSlot } from '../types';
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 export interface Settings {
   musicVolume: number; // 0..1
@@ -28,6 +28,31 @@ export interface Statistics {
   bombsUsed: number;
 }
 
+export type RunDifficulty = 'normal' | 'hard' | 'nightmare';
+
+/** A dungeon run in progress (resumable from the dungeon-select screen). */
+export interface ActiveRun {
+  dungeonId: string;
+  difficulty: RunDifficulty;
+  /** 1-based wave the player is about to fight. */
+  wave: number;
+  /** Player HP carried between waves. */
+  hp: number;
+  /** Ids of run-only upgrades taken. */
+  buffs: string[];
+  goldEarned: number;
+  xpEarned: number;
+  drops: string[];
+  startLevel: number;
+  startedAt: number;
+}
+
+export interface DungeonProgress {
+  bestWave: number;
+  cleared: boolean;
+  clearedDifficulties: RunDifficulty[];
+}
+
 export interface SaveData {
   saveVersion: number;
   createdAt: number;
@@ -46,6 +71,8 @@ export interface SaveData {
   completedStages: string[];
   settings: Settings;
   stats: Statistics;
+  /** v2: roguelite dungeon runs. */
+  run: { active: ActiveRun | null; dungeons: Record<string, DungeonProgress> };
 }
 
 export function defaultSave(): SaveData {
@@ -72,6 +99,7 @@ export function defaultSave(): SaveData {
       battlesWon: 0, battlesLost: 0, bossesDefeated: 0, totalMerges: 0, totalDamage: 0, goldEarned: 0,
       highestRank: 0, highestCombo: 0, criticalHits: 0, potionsUsed: 0, bombsUsed: 0,
     },
+    run: { active: null, dungeons: {} },
   };
 }
 
@@ -82,24 +110,50 @@ export function defaultSave(): SaveData {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const MIGRATIONS: Record<number, (old: any) => any> = {
-  // Example for the future:
-  // 1: (old) => ({ ...old, saveVersion: 2 }),
+  /**
+   * v1 -> v2: individual stage progress becomes dungeon progress. Each region had 5 stages + boss;
+   * a cleared boss marks the dungeon cleared (best wave 10), otherwise each cleared stage counts as ~2 waves.
+   */
+  1: (old) => {
+    const completed: string[] = Array.isArray(old.completedStages) ? old.completedStages : [];
+    const dungeons: Record<string, DungeonProgress> = {};
+    for (const id of completed) {
+      const m = /^([a-z]+)_(\d+)$/.exec(id);
+      if (!m) continue;
+      const region = m[1];
+      const idx = parseInt(m[2], 10);
+      const d = (dungeons[region] ??= { bestWave: 0, cleared: false, clearedDifficulties: [] });
+      if (idx === 6) {
+        d.cleared = true;
+        d.bestWave = 10;
+        if (!d.clearedDifficulties.includes('normal')) d.clearedDifficulties.push('normal');
+      } else {
+        d.bestWave = Math.max(d.bestWave, Math.min(9, idx * 2));
+      }
+    }
+    return { ...old, saveVersion: 2, run: { active: null, dungeons } };
+  },
 };
 
 /** Deep-merge `partial` over `base`, so missing fields in older/edited saves fall back to defaults. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mergeDefaults<T>(base: T, partial: any): T {
+  if (partial === undefined) return base;
+  // Nullable slots (e.g. run.active) accept whatever the save holds.
+  if (base === null) return (partial ?? null) as T;
   if (Array.isArray(base)) return (Array.isArray(partial) ? partial : base) as T;
   if (base && typeof base === 'object') {
+    if (!partial || typeof partial !== 'object' || Array.isArray(partial)) return base;
+    const baseKeys = Object.keys(base as object);
+    // Open records (e.g. run.dungeons) have no default keys - keep the saved content as-is.
+    if (baseKeys.length === 0) return partial as T;
     const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };
-    if (partial && typeof partial === 'object') {
-      for (const k of Object.keys(out)) {
-        if (k in partial) out[k] = mergeDefaults((base as Record<string, unknown>)[k], partial[k]);
-      }
+    for (const k of baseKeys) {
+      if (k in partial) out[k] = mergeDefaults((base as Record<string, unknown>)[k], partial[k]);
     }
     return out as T;
   }
-  return (partial === undefined || partial === null || typeof partial !== typeof base ? base : partial) as T;
+  return (partial === null || typeof partial !== typeof base ? base : partial) as T;
 }
 
 export class SaveSystem {

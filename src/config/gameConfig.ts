@@ -24,6 +24,8 @@ export const SCENES = {
   UPGRADE: 'UpgradeScene',
   SHOP: 'ShopScene',
   SETTINGS: 'SettingsScene',
+  WAVE_INTRO: 'WaveIntroScene',
+  RUN_UPGRADE: 'RunUpgradeScene',
 } as const;
 
 /** localStorage key for the save file. */

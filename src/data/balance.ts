@@ -92,6 +92,22 @@ export const ECONOMY = {
   rarityPriceMult: { common: 1, rare: 2.2, epic: 5, legendary: 12 } as Record<string, number>,
 } as const;
 
+/** Roguelite dungeon runs (see systems/RunSystem.ts). Difficulty only shifts the stage level fed to ENEMY_SCALING. */
+export const RUN = {
+  waves: 10,
+  /** Offer a run-only upgrade after clearing these waves. */
+  upgradeAfter: [3, 6, 8],
+  /** Elite waves: a normal enemy with a level bonus and an ELITE tag. */
+  eliteWaves: [5, 8],
+  eliteLevelBonus: 2,
+  /** Normal enemy level rises by one every N waves inside a dungeon. */
+  wavesPerLevel: 2,
+  /** Level offset per difficulty. */
+  difficultyLevelOffset: { normal: 0, hard: 4, nightmare: 8 } as Record<string, number>,
+  /** Run-only upgrade choices offered at once. */
+  upgradeChoices: 3,
+} as const;
+
 export const ANIM = {
   slideMs: 110,
   mergePulseMs: 140,

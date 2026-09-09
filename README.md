@@ -22,7 +22,8 @@ _Placeholder - add screenshots to `docs/screenshots/` and link them here._
 - **Enemies attack on a counter** ("Enemy attack in: 2"). Different enemies attack at different speeds, so you can plan combos around it.
 - **Special tiles**: a **Potion** heals you and a **Bomb** clears the surrounding cells (and damages the enemy). Push one against the board edge, or tap it, to activate. They never merge with ninjas.
 - **Stuck board?** Instead of game over you lose 25% max HP and your weakest ninjas are cleared so the battle continues.
-- **Bosses** end each region and bring one mechanic each: Board Lock, Poison, Shield, Curse (blocked spawns) and Rage.
+- **Dungeon runs (roguelite)**: the world map is a compact dungeon-select carousel. Pick a dungeon and a difficulty, then fight 10 waves back to back: normal waves, two **elite** waves, a **blessing** choice (run-only buff) after waves 3, 6 and 8, and the **boss** on wave 10. HP carries between waves and a run can be left and resumed later. Clearing a dungeon unlocks the next one and its Hard mode (then Nightmare). Falling ends the run but you keep every coin, XP point and item earned.
+- **Bosses** end each dungeon and bring one mechanic each: Board Lock, Poison, Shield, Curse (blocked spawns) and Rage.
 - **Progression**: XP levels up your ninja (more HP and attack, a skill point every 3 levels). Gold buys permanent training (Attack, Vitality, Critical, Defense) and equipment (Weapon / Armor / Accessory, Common to Legendary). Bag holds 20 items.
 - **Defeat is gentle**: you keep every level, coin and item. Retry or head back to the village.
 
@@ -34,6 +35,7 @@ _Placeholder - add screenshots to `docs/screenshots/` and link them here._
 | --- | --- |
 | Move / merge | Arrow keys or `W` `A` `S` `D` |
 | Activate potion / bomb | Click the tile (or push it to the edge) |
+| Choose dungeon | Left / Right arrows, Enter to start |
 | Menus | Mouse |
 
 ### Mobile / touch
@@ -41,6 +43,7 @@ _Placeholder - add screenshots to `docs/screenshots/` and link them here._
 | Action | Gesture |
 | --- | --- |
 | Move / merge | Swipe up / down / left / right anywhere on the screen (short minimum distance prevents accidental moves; the move fires as soon as the threshold is passed) |
+| Choose dungeon | Swipe left / right on the dungeon-select screen, or tap the arrows |
 | Activate potion / bomb | Tap the tile |
 | Menus | Tap - all buttons are at least 44 CSS px tall |
 
@@ -139,7 +142,8 @@ The site will be published at `https://<user>.github.io/<repo>/`. No server runt
 │   │   ├── ranks.ts            The 11 ninja forms
 │   │   ├── enemies.ts          Enemy archetypes
 │   │   ├── bosses.ts           Region bosses + abilities
-│   │   ├── stages.ts           World map regions (5 battles + boss each)
+│   │   ├── stages.ts           Dungeons/regions (enemy roster + boss each)
+│   │   ├── battleAssets.ts     Verified tileset crops, per-dungeon environments, battle layout
 │   │   ├── items.ts            Equipment definitions, rarities, shop catalogue
 │   │   └── progression.ts      XP curve, upgrade definitions, cost formula
 │   ├── systems/
@@ -148,6 +152,7 @@ The site will be published at `https://<user>.github.io/<repo>/`. No server runt
 │   │   ├── SaveSystem.ts       Versioned localStorage save with migrations, export/import/reset
 │   │   ├── ProgressionSystem.ts  Level/XP/gold/upgrades/stage unlocks, derived player stats
 │   │   ├── EquipmentSystem.ts  Slots, bag, buy/sell/equip
+│   │   ├── RunSystem.ts        Dungeon runs: waves, elites, blessings, difficulty, resume
 │   │   ├── AudioSystem.ts      Music/SFX with volume settings and mobile autoplay unlock
 │   │   ├── InputSystem.ts      Keyboard + swipe + tap
 │   │   └── Rng.ts              Seeded PRNG (deterministic tests)
@@ -156,7 +161,7 @@ The site will be published at `https://<user>.github.io/<repo>/`. No server runt
 │   │   ├── BoardView.ts        Renders/animates the board from BoardSystem state
 │   │   ├── Enemy.ts            Enemy view: sprite, HP bar, counter, reactions
 │   │   └── Player.ts           Battle HUD for the player
-│   ├── scenes/                 Boot, Preload, Title, Village, WorldMap, Battle, Results, Equipment, Upgrade, Shop, Settings
+│   ├── scenes/                 Boot, Preload, Title, Village, WorldMap (dungeon select), WaveIntro, Battle, RunUpgrade, Results, Equipment, Upgrade, Shop, Settings
 │   ├── ui/                     Button, Panel, HealthBar, Modal, Toast, Slider, Toggle, FloatingText, Background, theme, motion
 │   └── debug/DebugKeys.ts      Dev-only cheats
 ├── tests/                      Vitest specs
@@ -176,13 +181,14 @@ Progress is stored in `localStorage` under the key `ninja-merge-rpg:save` as JSO
   "equipped": { "weapon", "armor", "accessory" },
   "inventory": ["item ids..."],
   "unlockedStages": [], "completedStages": [],
+  "run": { "active": null | { "dungeonId", "difficulty", "wave", "hp", "buffs", ... }, "dungeons": { "<id>": { "bestWave", "cleared", "clearedDifficulties" } } },
   "settings": { "musicVolume", "sfxVolume", "musicMuted", "sfxMuted", "screenShake", "damageNumbers", "reducedMotion" },
   "stats": { "battlesWon", "battlesLost", "bossesDefeated", "totalMerges", "totalDamage", "goldEarned", "highestRank", "highestCombo", ... }
 }
 ```
 
 - **Autosave** happens after battle victory (and defeat, for statistics), purchases, equipment changes, upgrades and stage unlocks.
-- **Versioning/migrations**: `SaveSystem.parse` runs the `MIGRATIONS` chain until the data reaches `SAVE_VERSION`, then deep-merges it over the defaults so missing fields never break older saves. To change the format, bump `SAVE_VERSION` and add a `MIGRATIONS[oldVersion]` function.
+- **Versioning/migrations**: `SaveSystem.parse` runs the `MIGRATIONS` chain until the data reaches `SAVE_VERSION` (currently 2), then deep-merges it over the defaults so missing fields never break older saves. Version 1 saves (individual stages) are migrated into dungeon progress automatically. To change the format, bump `SAVE_VERSION` and add a `MIGRATIONS[oldVersion]` function.
 - **Export / Import / Reset** live in Settings. Export copies the JSON to the clipboard and downloads a `.json` file; Import opens a paste box; Reset wipes progress but keeps your settings.
 
 ## Balancing

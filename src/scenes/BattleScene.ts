@@ -4,7 +4,7 @@ import { BOARD } from '../data/balance';
 import { BOSSES } from '../data/bosses';
 import { ENEMIES } from '../data/enemies';
 import { rankName } from '../data/ranks';
-import { getRegion, getStage } from '../data/stages';
+import { getRegion, getStage, REGIONS } from '../data/stages';
 import { installDebugKeys } from '../debug/DebugKeys';
 import { BATTLE_LAYOUT } from '../data/battleAssets';
 import { BattleBackdrop } from '../entities/BattleBackdrop';
@@ -17,7 +17,8 @@ import { CombatSystem, type AttackBreakdown, type EnemyTurnEvent } from '../syst
 import { equipment } from '../systems/EquipmentSystem';
 import { InputSystem } from '../systems/InputSystem';
 import { progression } from '../systems/ProgressionSystem';
-import { save } from '../systems/SaveSystem';
+import { runSystem, type WaveDef } from '../systems/RunSystem';
+import { save, type ActiveRun } from '../systems/SaveSystem';
 import type { ActivationEvent, Direction, EnemyDef, StageDef } from '../types';
 import { delay } from '../ui/async';
 import { FloatingText } from '../ui/FloatingText';
@@ -29,7 +30,25 @@ import { toast } from '../ui/Toast';
 import { DEPTH, TEXT, textStyle } from '../ui/theme';
 
 export interface BattleData {
-  stageId: string;
+  /** Classic single-stage battle (debug / legacy). */
+  stageId?: string;
+  /** Fight the active dungeon run's current wave. */
+  run?: boolean;
+}
+
+/** Summary handed to ResultsScene when a dungeon run ends. */
+export interface RunSummary {
+  dungeonId: string;
+  difficulty: ActiveRun['difficulty'];
+  wavesCleared: number;
+  totalWaves: number;
+  gold: number;
+  xp: number;
+  drops: string[];
+  startLevel: number;
+  endLevel: number;
+  unlockedDungeonId: string | null;
+  newDifficulty: string | null;
 }
 
 export interface BattleRewards {
@@ -69,14 +88,38 @@ export class BattleScene extends Phaser.Scene {
   private ended = false;
   private paused = false;
   private stageText!: Phaser.GameObjects.Text;
+  /** Set when fighting inside a dungeon run. */
+  private wave: WaveDef | null = null;
 
   constructor() {
     super(SCENES.BATTLE);
   }
 
   init(data: BattleData): void {
-    this.stage = getStage(data.stageId);
-    this.enemyDef = (this.stage.isBoss ? BOSSES : ENEMIES)[this.stage.enemyId] ?? ENEMIES.slime;
+    this.wave = null;
+    const firstStageId = getRegion('forest').stages[0].id;
+    if (data?.run) {
+      const wave = runSystem.currentWave();
+      if (!wave) {
+        this.stage = getStage(firstStageId); // no active run - never crash
+      } else {
+        this.wave = wave;
+        this.stage = {
+          id: `${wave.regionId}_wave${wave.wave}`,
+          name: `Wave ${wave.wave} / ${wave.total}`,
+          regionId: wave.regionId,
+          index: wave.wave - 1,
+          enemyId: wave.enemyId,
+          level: wave.level,
+          isBoss: wave.kind === 'boss',
+        };
+      }
+    } else {
+      this.stage = getStage(data?.stageId ?? firstStageId);
+    }
+    const base = (this.stage.isBoss ? BOSSES : ENEMIES)[this.stage.enemyId] ?? ENEMIES.slime;
+    // Elite waves reuse a normal enemy at a higher level; only the label changes.
+    this.enemyDef = this.wave?.kind === 'elite' ? { ...base, name: `ELITE ${base.name}` } : base;
     this.busy = false;
     this.ended = false;
     this.paused = false;
@@ -88,9 +131,11 @@ export class BattleScene extends Phaser.Scene {
     fadeIn(this);
     audio.playMusic(this.enemyDef.music ?? region.music);
 
-    // Systems
-    const stats = progression.computeStats();
+    // Systems (run blessings sit on top of the permanent stats; combat math itself is unchanged)
+    const stats = this.wave ? runSystem.stats(progression.computeStats()) : progression.computeStats();
     this.combat = new CombatSystem(stats, this.enemyDef, this.stage.level);
+    const run = runSystem.active;
+    if (this.wave && run) this.combat.player.hp = Phaser.Math.Clamp(run.hp, 1, stats.maxHp); // HP carries across waves
     this.board = new BoardSystem();
     const curse = this.combat.curseModifier();
     if (curse) this.board.spawnModifiers = curse;
@@ -98,7 +143,7 @@ export class BattleScene extends Phaser.Scene {
 
     // Top: stage title, enemy on the ground line, status card beneath the scene
     flatPanel(this, GAME_WIDTH / 2, L.stageTitleY, 520, 48, 0x1a1008, 0.6, 12).setDepth(DEPTH.hud);
-    this.stageText = this.add.text(GAME_WIDTH / 2, L.stageTitleY, `${region.name}  -  ${this.stage.name}`, textStyle(24, { color: TEXT.gold })).setOrigin(0.5).setDepth(DEPTH.hud + 1);
+    this.stageText = this.add.text(GAME_WIDTH / 2, L.stageTitleY, `${region.name}  -  ${this.stage.name}`, textStyle(24, { color: this.wave?.kind === 'boss' ? TEXT.red : TEXT.gold })).setOrigin(0.5).setDepth(DEPTH.hud + 1);
     this.enemyView = new EnemyView(this, BATTLE_LAYOUT.enemyX, BATTLE_LAYOUT.enemyFeetY, this.enemyDef);
     this.enemyCard = new EnemyStatusCard(this, BATTLE_LAYOUT.status.top, BATTLE_LAYOUT.status.height, this.enemyDef, this.combat.enemy);
 
@@ -407,15 +452,52 @@ export class BattleScene extends Phaser.Scene {
     for (const d of drops) (equipment.addItem(d, false) ? kept : lost).push(d);
     progression.addGold(gold);
     const levelUp = progression.addXp(xp);
-    const unlocked = progression.completeStage(this.stage.id);
     const st = save.data.stats;
     st.battlesWon++;
     if (this.enemyDef.isBoss) st.bossesDefeated++;
-    save.persist();
 
+    if (this.wave && runSystem.active) {
+      await this.finishRunWave(gold, xp, kept);
+      return;
+    }
+
+    const unlocked = progression.completeStage(this.stage.id);
+    save.persist();
     const rewards: BattleRewards = { xp, gold, drops: kept, dropsLost: lost, levelUp, unlockedStageId: unlocked, highestRank: this.board.highestRank, before };
     await delay(this, motion.ms(500));
     goTo(this, SCENES.RESULTS, { outcome: 'victory', stageId: this.stage.id, rewards });
+  }
+
+  /** Dungeon-run wave cleared: record it and continue the run without visiting the map. */
+  private async finishRunWave(gold: number, xp: number, drops: string[]): Promise<void> {
+    const run = runSystem.active!;
+    const wave = this.wave!;
+    const region = getRegion(wave.regionId);
+    const regionIndex = REGIONS.findIndex((r) => r.id === region.id);
+    const nextRegion = regionIndex + 1 < REGIONS.length ? REGIONS[regionIndex + 1] : null;
+    const nextWasUnlocked = nextRegion ? progression.isRegionUnlocked(nextRegion.id) : true;
+    const hadDifficulty = runSystem.progressFor(region.id).clearedDifficulties.includes(run.difficulty);
+    const totals = { gold: run.goldEarned + gold, xp: run.xpEarned + xp, drops: [...run.drops, ...drops], startLevel: run.startLevel, difficulty: run.difficulty };
+    const next = runSystem.recordWaveVictory(this.combat.player.hp, gold, xp, drops);
+    if (wave.kind === 'boss') {
+      // Clearing the boss clears the whole region in the stage data, which is what unlocks the next dungeon.
+      for (const s of region.stages) progression.completeStage(s.id);
+    }
+    save.persist();
+    await delay(this, motion.ms(450));
+    if (next === 'complete') {
+      const summary: RunSummary = {
+        dungeonId: region.id, difficulty: totals.difficulty, wavesCleared: wave.total, totalWaves: wave.total,
+        gold: totals.gold, xp: totals.xp, drops: totals.drops, startLevel: totals.startLevel, endLevel: save.data.player.level,
+        unlockedDungeonId: nextRegion && !nextWasUnlocked && progression.isRegionUnlocked(nextRegion.id) ? nextRegion.id : null,
+        newDifficulty: hadDifficulty ? null : totals.difficulty === 'normal' ? 'hard' : totals.difficulty === 'hard' ? 'nightmare' : null,
+      };
+      goTo(this, SCENES.RESULTS, { outcome: 'runComplete', stageId: this.stage.id, run: summary });
+    } else if (next === 'upgrade') {
+      goTo(this, SCENES.RUN_UPGRADE);
+    } else {
+      goTo(this, SCENES.WAVE_INTRO, { mode: 'wave' });
+    }
   }
 
   private async defeat(): Promise<void> {
@@ -428,6 +510,17 @@ export class BattleScene extends Phaser.Scene {
     this.floats.show(GAME_WIDTH / 2, L.comboY, 'DEFEATED...', { size: 60, color: TEXT.red, duration: 1600, rise: 10, scaleFrom: 1.6 });
     this.cameras.main.zoomTo(motion.reduced ? 1 : 1.04, 600);
     await delay(this, motion.ms(1100));
+    const run = runSystem.active;
+    if (this.wave && run) {
+      const summary: RunSummary = {
+        dungeonId: run.dungeonId, difficulty: run.difficulty, wavesCleared: run.wave - 1, totalWaves: this.wave.total,
+        gold: run.goldEarned, xp: run.xpEarned, drops: run.drops, startLevel: run.startLevel, endLevel: save.data.player.level,
+        unlockedDungeonId: null, newDifficulty: null,
+      };
+      runSystem.endRun();
+      goTo(this, SCENES.RESULTS, { outcome: 'runFailed', stageId: this.stage.id, run: summary }, 400);
+      return;
+    }
     goTo(this, SCENES.RESULTS, { outcome: 'defeat', stageId: this.stage.id }, 400);
   }
 
@@ -454,8 +547,8 @@ export class BattleScene extends Phaser.Scene {
             this.openPause();
           },
         },
-        { label: 'Restart Battle', onClick: () => goTo(this, SCENES.BATTLE, { stageId: this.stage.id }) },
-        { label: 'Return to Village', onClick: () => goTo(this, SCENES.VILLAGE), variant: 'danger' },
+        { label: this.wave ? 'Restart Wave' : 'Restart Battle', onClick: () => goTo(this, SCENES.BATTLE, this.wave ? { run: true } : { stageId: this.stage.id }) },
+        { label: this.wave ? 'Leave (run is saved)' : 'Return to Village', onClick: () => goTo(this, SCENES.VILLAGE), variant: 'danger' },
       ],
     });
   }

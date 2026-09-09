@@ -1,9 +1,10 @@
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH, SCENES } from '../config/gameConfig';
 import { charWalkKey, HERO_CHARACTER } from '../data/assets';
-import { getStage } from '../data/stages';
+import { getRegion } from '../data/stages';
+import { RUN } from '../data/balance';
+import { runSystem } from '../systems/RunSystem';
 import { audio } from '../systems/AudioSystem';
-import { progression } from '../systems/ProgressionSystem';
 import { save } from '../systems/SaveSystem';
 import { drawBackground } from '../ui/Background';
 import { Card } from '../ui/Card';
@@ -32,12 +33,15 @@ export class VillageScene extends Phaser.Scene {
       this.add.sprite(GAME_WIDTH / 2, 505, walk, 0).setScale(7).setOrigin(0.5, 1).setDepth(DEPTH.decor + 2).play('hero_walk');
     }
 
-    const current = getStage(progression.currentStageId());
+    const active = runSystem.active;
+    const caption = active
+      ? `Run in progress: ${getRegion(active.dungeonId).name}  -  Wave ${active.wave} / ${RUN.waves}`
+      : `Next dungeon: ${getRegion(runSystem.suggestedDungeonId()).name}`;
     const sp = save.data.player.skillPoints;
 
     const menu = new Card(this, { top: 560, padding: 24, gap: 12 });
     menu.button('Continue Adventure', () => goTo(this, SCENES.WORLD_MAP), { variant: 'primary', icon: 'icon_Kunai', iconScale: 2.5, fontSize: 32, height: 96 });
-    menu.text(`Next battle: ${current.name}`, 20, { color: TEXT.muted });
+    menu.text(caption, 20, { color: active ? TEXT.gold : TEXT.muted });
     menu.button('Equipment', () => goTo(this, SCENES.EQUIPMENT), { icon: 'icon_Armor', iconScale: 2.5, fontSize: 30 });
     menu.button(sp > 0 ? `Upgrade Ninja  (${sp} skill point${sp > 1 ? 's' : ''}!)` : 'Upgrade Ninja', () => goTo(this, SCENES.UPGRADE), { icon: 'icon_AttackUpgrade', iconScale: 2.5, fontSize: 30, color: sp > 0 ? TEXT.green : undefined });
     menu.button('Shop', () => goTo(this, SCENES.SHOP), { icon: 'icon_Money', iconScale: 2.5, fontSize: 30 });

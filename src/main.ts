@@ -6,11 +6,13 @@ import { BootScene } from './scenes/BootScene';
 import { EquipmentScene } from './scenes/EquipmentScene';
 import { PreloadScene } from './scenes/PreloadScene';
 import { ResultsScene } from './scenes/ResultsScene';
+import { RunUpgradeScene } from './scenes/RunUpgradeScene';
 import { SettingsScene } from './scenes/SettingsScene';
 import { ShopScene } from './scenes/ShopScene';
 import { TitleScene } from './scenes/TitleScene';
 import { UpgradeScene } from './scenes/UpgradeScene';
 import { VillageScene } from './scenes/VillageScene';
+import { WaveIntroScene } from './scenes/WaveIntroScene';
 import { WorldMapScene } from './scenes/WorldMapScene';
 import { audio } from './systems/AudioSystem';
 import { save } from './systems/SaveSystem';
@@ -57,6 +59,8 @@ const config: Phaser.Types.Core.GameConfig = {
     UpgradeScene,
     ShopScene,
     SettingsScene,
+    WaveIntroScene,
+    RunUpgradeScene,
   ],
 };
 

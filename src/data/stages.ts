@@ -23,12 +23,12 @@ const SPECS: RegionSpec[] = [
     enemies: ['slime', 'bamboo', 'bat', 'mushroom', 'goblin'], boss: 'bamboo_titan', startLevel: 1,
   },
   {
-    id: 'cave', name: 'Echo Cave', subtitle: 'Damp, dark and hungry', theme: 'cave', music: 'music_battle',
+    id: 'cave', name: 'Shadow Cave', subtitle: 'Damp, dark and hungry', theme: 'cave', music: 'music_battle',
     stageNames: ['Cave 1', 'Cave 2', 'Cave 3', 'Cave 4', 'Cave 5', 'Cave Boss'],
     enemies: ['skull', 'bat', 'larva', 'spirit', 'mole'], boss: 'slime_king', startLevel: 7,
   },
   {
-    id: 'mountain', name: 'Stone Mountain', subtitle: 'Thin air, thick hides', theme: 'mountain', music: 'music_battle',
+    id: 'mountain', name: 'Mountain Temple', subtitle: 'Thin air, thick hides', theme: 'mountain', music: 'music_battle',
     stageNames: ['Mountain 1', 'Mountain 2', 'Mountain 3', 'Mountain 4', 'Mountain 5', 'Mountain Boss'],
     enemies: ['bear', 'owl', 'racoon', 'eye', 'cyclope'], boss: 'racoon_chief', startLevel: 13,
   },
@@ -38,7 +38,7 @@ const SPECS: RegionSpec[] = [
     enemies: ['snake', 'lizard', 'reptile', 'skeleton', 'spider'], boss: 'tengu', startLevel: 19,
   },
   {
-    id: 'snow', name: 'Frostveil Peaks', subtitle: 'Silence, then teeth', theme: 'snow', music: 'music_battle',
+    id: 'snow', name: 'Frozen Shrine', subtitle: 'Silence, then teeth', theme: 'snow', music: 'music_battle',
     stageNames: ['Snow 1', 'Snow 2', 'Snow 3', 'Snow 4', 'Snow 5', 'Snow Boss'],
     enemies: ['yellowbat', 'mouse', 'spirit', 'beast', 'mage'], boss: 'frost_spirit', startLevel: 25,
   },
@@ -83,3 +83,15 @@ export function nextStage(id: string): StageDef | null {
 }
 
 export const FIRST_STAGE_ID = ALL_STAGES[0].id;
+
+/** Dungeon difficulty stars (1-5) shown on the dungeon-select screen. */
+export function regionStars(regionId: string): number {
+  const i = REGIONS.findIndex((r) => r.id === regionId);
+  return Math.min(5, Math.max(1, i + 1));
+}
+
+/** The dungeon (region) that must be cleared before `regionId` unlocks, or null for the first. */
+export function previousRegion(regionId: string): RegionDef | null {
+  const i = REGIONS.findIndex((r) => r.id === regionId);
+  return i > 0 ? REGIONS[i - 1] : null;
+}

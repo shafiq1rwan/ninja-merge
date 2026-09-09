@@ -13,12 +13,15 @@ import { HealthBar } from '../ui/HealthBar';
 import { fadeIn, goTo } from '../ui/Hud';
 import { motion } from '../ui/motion';
 import { COLORS, hex, TEXT, textStyle } from '../ui/theme';
-import type { BattleRewards } from './BattleScene';
+import { getRegion, REGIONS } from '../data/stages';
+import { DIFFICULTY_LABEL } from '../systems/RunSystem';
+import type { BattleRewards, RunSummary } from './BattleScene';
 
 export interface ResultsData {
-  outcome: 'victory' | 'defeat';
+  outcome: 'victory' | 'defeat' | 'runComplete' | 'runFailed';
   stageId: string;
   rewards?: BattleRewards;
+  run?: RunSummary;
 }
 
 /** Victory rewards / defeat screen - one card holding everything, buttons included. */
@@ -34,10 +37,67 @@ export class ResultsScene extends Phaser.Scene {
   }
 
   create(): void {
-    drawBackground(this, this.payload.outcome === 'victory' ? 'village' : 'cave', { decorY: GAME_HEIGHT - 130, decorCount: 4, particles: 6 });
+    const won = this.payload.outcome === 'victory' || this.payload.outcome === 'runComplete';
+    drawBackground(this, won ? 'village' : 'cave', { decorY: GAME_HEIGHT - 130, decorCount: 4, particles: 6 });
     fadeIn(this);
-    if (this.payload.outcome === 'victory') this.victory();
+    if (this.payload.outcome === 'runComplete' || this.payload.outcome === 'runFailed') this.runEnd();
+    else if (this.payload.outcome === 'victory') this.victory();
     else this.defeat();
+  }
+
+  /** End of a dungeon run (cleared or fallen): one compact summary card. */
+  private runEnd(): void {
+    const r = this.payload.run!;
+    const won = this.payload.outcome === 'runComplete';
+    const region = getRegion(r.dungeonId);
+    const card = new Card(this, { width: 640, centerY: 600, padding: 30, gap: 12 });
+    const title = card.title(won ? 'DUNGEON CLEARED!' : 'RUN OVER', won ? 56 : 64, won ? TEXT.gold : TEXT.red);
+    card.text(`${region.name}   -   ${DIFFICULTY_LABEL[r.difficulty]}`, 26, { color: TEXT.light });
+    card.text(won ? `All ${r.totalWaves} waves cleared` : `Fell on wave ${r.wavesCleared + 1} of ${r.totalWaves}`, 24, { color: won ? TEXT.green : TEXT.muted });
+    card.divider();
+    let goldText!: Phaser.GameObjects.Text;
+    let xpText!: Phaser.GameObjects.Text;
+    card.custom(52, (cx, top) => {
+      const coin = this.add.sprite(cx - 150, top + 26, 'item_CoinAnim', 0).setScale(5);
+      if (this.anims.exists('coin_spin')) coin.play('coin_spin');
+      goldText = this.add.text(cx - 105, top + 26, '+0 gold', textStyle(34, { color: TEXT.gold, align: 'left' })).setOrigin(0, 0.5);
+      return [coin, goldText];
+    });
+    card.custom(52, (cx, top) => {
+      const scroll = this.add.image(cx - 150, top + 26, 'item_Scroll').setScale(4);
+      xpText = this.add.text(cx - 105, top + 26, '+0 XP', textStyle(34, { color: TEXT.blue, align: 'left' })).setOrigin(0, 0.5);
+      return [scroll, xpText];
+    });
+    if (r.endLevel > r.startLevel) card.text(`LEVEL UP!  Lv ${r.startLevel} -> Lv ${r.endLevel}`, 30, { color: TEXT.green });
+    if (r.drops.length) {
+      card.divider();
+      card.text('Loot', 24, { color: TEXT.gold });
+      const counts = new Map<string, number>();
+      for (const id of r.drops) counts.set(id, (counts.get(id) ?? 0) + 1);
+      for (const [id, n] of counts) {
+        const item = getItem(id);
+        if (!item) continue;
+        card.custom(36, (cx, top, w) => {
+          const objs: Phaser.GameObjects.GameObject[] = [];
+          if (this.textures.exists(item.icon)) objs.push(this.add.image(cx - w / 2 + 26, top + 18, item.icon).setScale(2.4));
+          objs.push(this.add.text(cx - w / 2 + 58, top + 18, n > 1 ? `${item.name}  x${n}` : item.name, textStyle(22, { color: hex(RARITY_COLORS[item.rarity]), align: 'left' })).setOrigin(0, 0.5));
+          objs.push(this.add.text(cx + w / 2, top + 18, RARITY_LABEL[item.rarity], textStyle(18, { color: TEXT.muted, align: 'right' })).setOrigin(1, 0.5));
+          return objs;
+        });
+      }
+    }
+    if (r.unlockedDungeonId) card.text(`New dungeon unlocked: ${REGIONS.find((x) => x.id === r.unlockedDungeonId)?.name ?? ''}`, 24, { color: TEXT.green });
+    if (r.newDifficulty) card.text(`${DIFFICULTY_LABEL[r.newDifficulty as keyof typeof DIFFICULTY_LABEL]} difficulty unlocked for ${region.name}`, 22, { color: TEXT.gold });
+    if (!won) card.text('You keep every coin, XP point and item earned in the run.', 20, { color: TEXT.muted });
+    card.divider();
+    card.button('Dungeon Select', () => goTo(this, SCENES.WORLD_MAP), { variant: 'primary', height: 92, fontSize: 30 });
+    card.button('Village', () => goTo(this, SCENES.VILLAGE));
+    card.finish();
+
+    title.setScale(motion.pop(1.4));
+    this.tweens.add({ targets: title, scale: 1, duration: 400, ease: 'Back.easeOut' });
+    this.countUp(goldText, r.gold, 'gold', 700, () => audio.play('coin', { volume: 0.5 }));
+    this.countUp(xpText, r.xp, 'XP', 700);
   }
 
   private victory(): void {
