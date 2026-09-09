@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import { ANIM } from '../data/balance';
 import { BATTLE_LAYOUT } from '../data/battleAssets';
+import { JUICE } from '../data/juice';
+import { effects } from '../settings/EffectsSettings';
 import { audio } from '../systems/AudioSystem';
 import type { EnemyState } from '../systems/CombatSystem';
 import type { EnemyDef } from '../types';
@@ -19,9 +21,11 @@ export class EnemyView extends Phaser.GameObjects.Container {
   readonly def: EnemyDef;
   readonly sprite: Phaser.GameObjects.Sprite;
   readonly renderScale: number;
+  private shadow: Phaser.GameObjects.Ellipse;
   private shieldFx?: Phaser.GameObjects.Sprite;
   private idleKey: string;
   private hitKey?: string;
+  private idleTween?: Phaser.Tweens.Tween;
 
   /** @param x centre x, @param feetY the ground line the enemy stands on */
   constructor(scene: Phaser.Scene, x: number, feetY: number, def: EnemyDef) {
@@ -48,7 +52,8 @@ export class EnemyView extends Phaser.GameObjects.Container {
     }
 
     const w = scene.textures.get(texture).get(0).width * this.renderScale;
-    this.add(scene.add.ellipse(0, 4, Math.round(w * 0.8), 18, 0x000000, 0.4));
+    this.shadow = scene.add.ellipse(0, 4, Math.round(w * 0.8), 18, 0x000000, 0.4);
+    this.add(this.shadow);
     this.sprite = scene.add.sprite(0, 0, texture, 0).setOrigin(0.5, 1).setScale(this.renderScale);
     if (scene.anims.exists(this.idleKey)) this.sprite.play(this.idleKey);
     this.add(this.sprite);
@@ -60,7 +65,7 @@ export class EnemyView extends Phaser.GameObjects.Container {
     return this.sprite.displayHeight;
   }
 
-  /** World point on the enemy's upper body where damage numbers spawn (they rise over the sprite, never into the title bar). */
+  /** World point on the enemy's upper body where damage numbers spawn. */
   get hitPoint(): { x: number; y: number } {
     return { x: this.x, y: this.y - this.spriteHeight * 0.6 };
   }
@@ -72,26 +77,80 @@ export class EnemyView extends Phaser.GameObjects.Container {
 
   private idleBob(): void {
     if (!this.sprite.active) return;
+    this.idleTween?.remove();
     this.sprite.setPosition(0, 0);
-    if (!motion.reduced) {
-      this.scene.tweens.add({ targets: this.sprite, y: -5, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    if (!effects.reduced) {
+      this.idleTween = this.scene.tweens.add({ targets: this.sprite, y: -5, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     }
   }
 
-  /** Flash + recoil. Bosses swap to their hit sheet briefly. */
+  /**
+   * Entrance. Normal enemies drop in quickly; a boss arrives with weight so the wave feels different.
+   */
+  async enter(kind: 'normal' | 'elite' | 'boss'): Promise<void> {
+    this.idleTween?.remove();
+    const drop = kind === 'boss' ? 220 : 90;
+    this.sprite.setAlpha(0);
+    this.shadow.setAlpha(0);
+    this.sprite.setY(-drop);
+    const ms = effects.ms(kind === 'boss' ? 520 : 240);
+    this.scene.tweens.add({ targets: this.shadow, alpha: 0.4, duration: ms });
+    await tweenAsync(this.scene, {
+      targets: this.sprite,
+      y: 0,
+      alpha: 1,
+      duration: ms,
+      ease: kind === 'boss' ? 'Bounce.easeOut' : 'Quad.easeOut',
+    });
+    if (kind === 'boss') {
+      motion.shake(this.scene, JUICE.shake.bossAttack, 120);
+      this.squashLand();
+    } else if (kind === 'elite') {
+      motion.flashSprite(this.scene, this.sprite, 0xc9a6ff, 140);
+    }
+    this.idleBob();
+  }
+
+  private squashLand(): void {
+    if (effects.reduced) return;
+    const s = this.renderScale;
+    this.scene.tweens.add({
+      targets: this.sprite,
+      scaleX: s * 1.08,
+      scaleY: s * 0.92,
+      duration: 90,
+      yoyo: true,
+      ease: 'Quad.easeOut',
+      onComplete: () => this.sprite.setScale(s),
+    });
+  }
+
+  /**
+   * Hit reaction: brief flash, a few pixels of recoil away from the player, and a tiny shake.
+   * Bosses swap to their hit sheet for one cycle.
+   */
   async hitReaction(crit: boolean): Promise<void> {
+    this.idleTween?.remove();
     this.scene.tweens.killTweensOf(this.sprite);
     this.sprite.setPosition(0, 0);
-    audio.play(crit ? 'crit' : 'enemyHit', { volume: crit ? 1 : 0.8 });
-    motion.flashSprite(this.scene, this.sprite, crit ? 0xffd97a : 0xffffff, crit ? 140 : 90);
-    if (crit) motion.shake(this.scene, 0.006, 160);
+    motion.flashSprite(this.scene, this.sprite, crit ? 0xffd97a : 0xffffff, crit ? 120 : 80);
     if (this.hitKey && this.scene.anims.exists(this.hitKey)) {
       this.sprite.play(this.hitKey);
       this.sprite.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
         if (this.sprite.active && this.scene.anims.exists(this.idleKey)) this.sprite.play(this.idleKey);
       });
     }
-    await tweenAsync(this.scene, { targets: this.sprite, x: motion.reduced ? 6 : 14, duration: 40, yoyo: true, repeat: crit ? 3 : 1 });
+    const px = effects.px(crit ? JUICE.recoil.critPx : JUICE.recoil.px);
+    const ms = effects.ms(JUICE.recoil.ms);
+    // Recoil backwards (up-screen, away from the player) with a small sideways jitter.
+    await tweenAsync(this.scene, {
+      targets: this.sprite,
+      y: -px,
+      x: Phaser.Math.Between(-2, 2) * (crit ? 2 : 1),
+      duration: ms * 0.4,
+      yoyo: true,
+      ease: 'Quad.easeOut',
+    });
     this.idleBob();
   }
 
@@ -112,13 +171,14 @@ export class EnemyView extends Phaser.GameObjects.Container {
 
   /** Lunge toward the player (down the screen) and back. Resolves at the moment of impact. */
   async attackLunge(): Promise<void> {
+    this.idleTween?.remove();
     this.scene.tweens.killTweensOf(this.sprite);
     this.sprite.setPosition(0, 0);
     const s = this.renderScale;
-    const ms = motion.ms(ANIM.enemyAttackMs);
+    const ms = effects.ms(ANIM.enemyAttackMs);
     await tweenAsync(this.scene, { targets: this.sprite, y: -22, scaleX: s * 1.06, scaleY: s * 0.94, duration: ms * 0.35, ease: 'Quad.easeOut' });
-    audio.play('attack');
-    tweenAsync(this.scene, { targets: this.sprite, y: 40, scaleX: s, scaleY: s, duration: ms * 0.2, ease: 'Quad.easeIn' })
+    audio.play('attack', { detune: -150 });
+    tweenAsync(this.scene, { targets: this.sprite, y: 44, scaleX: s, scaleY: s, duration: ms * 0.2, ease: 'Quad.easeIn' })
       .then(() => tweenAsync(this.scene, { targets: this.sprite, y: 0, duration: ms * 0.45, ease: 'Quad.easeOut' }))
       .then(() => this.idleBob());
     await delay(this.scene, ms * 0.2);
@@ -135,20 +195,47 @@ export class EnemyView extends Phaser.GameObjects.Container {
     }
   }
 
+  /** Phase change / rage: the enemy visibly changes state. */
+  async phaseChange(): Promise<void> {
+    this.idleTween?.remove();
+    this.scene.tweens.killTweensOf(this.sprite);
+    this.sprite.setPosition(0, 0);
+    motion.flashSprite(this.scene, this.sprite, 0xff6b5b, 160);
+    this.squashLand();
+    await tweenAsync(this.scene, { targets: this.sprite, y: -10, duration: effects.ms(120), yoyo: true, ease: 'Quad.easeOut' });
+    this.sprite.setTint(0xff9a8a);
+    this.idleBob();
+  }
+
   showRage(): void {
     this.sprite.setTint(0xff9a8a);
   }
 
-  /** Death: fade + shrink with smoke. */
-  async die(): Promise<void> {
+  /**
+   * Death: recoil, dissolve and smoke. Bosses take noticeably longer so the kill lands.
+   */
+  async die(isBoss = false): Promise<void> {
+    this.idleTween?.remove();
     this.scene.tweens.killTweensOf(this.sprite);
     this.showShield(false);
+    // Final recoil before collapsing.
+    await tweenAsync(this.scene, { targets: this.sprite, y: -effects.px(10), duration: effects.ms(isBoss ? 180 : 90), ease: 'Quad.easeOut' });
     if (this.scene.anims.exists('fx_smoke')) {
       const c = this.centerPoint;
       const fx = this.scene.add.sprite(c.x, c.y, 'fx_Smoke').setScale(Math.ceil(this.spriteHeight / 32) + 2).setDepth(DEPTH.fx).play('fx_smoke');
       fx.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => fx.destroy());
     }
-    await tweenAsync(this.scene, { targets: this.sprite, alpha: 0, scale: this.renderScale * 0.4, angle: motion.reduced ? 0 : 20, duration: motion.ms(520), ease: 'Quad.easeIn' });
+    this.scene.tweens.add({ targets: this.shadow, alpha: 0, duration: effects.ms(isBoss ? 900 : 380) });
+    await tweenAsync(this.scene, {
+      targets: this.sprite,
+      alpha: 0,
+      scaleX: this.renderScale * 0.5,
+      scaleY: this.renderScale * 0.35,
+      y: 12,
+      angle: effects.reduced ? 0 : isBoss ? 12 : 20,
+      duration: effects.ms(isBoss ? 900 : 400),
+      ease: 'Quad.easeIn',
+    });
   }
 }
 
@@ -161,9 +248,11 @@ export class EnemyStatusCard extends Phaser.GameObjects.Container {
   private counterText: Phaser.GameObjects.Text;
   private statusText: Phaser.GameObjects.Text;
   private nameText: Phaser.GameObjects.Text;
+  private scene2: Phaser.Scene;
 
   constructor(scene: Phaser.Scene, top: number, height: number, def: EnemyDef, state: EnemyState) {
     super(scene, 0, 0);
+    this.scene2 = scene;
     this.setDepth(DEPTH.hud);
     const width = 720 - 48;
     const cx = 360;
@@ -211,5 +300,13 @@ export class EnemyStatusCard extends Phaser.GameObjects.Container {
 
   showRage(): void {
     this.nameText.setColor(TEXT.red);
+  }
+
+  /** Slide the card in (used for a boss entrance). */
+  appear(): Promise<void> {
+    if (effects.reduced) return Promise.resolve();
+    this.setAlpha(0);
+    this.y = 24;
+    return tweenAsync(this.scene2, { targets: this, alpha: 1, y: 0, duration: effects.ms(260), ease: 'Quad.easeOut' });
   }
 }

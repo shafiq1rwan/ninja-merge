@@ -272,7 +272,7 @@ export class WorldMapScene extends Phaser.Scene {
 
   private continueRun(): void {
     if (!runSystem.active) return;
-    goTo(this, SCENES.WAVE_INTRO, { mode: 'wave' });
+    goTo(this, SCENES.BATTLE, { run: true });
   }
 
   private abandonRun(): void {

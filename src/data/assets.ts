@@ -170,6 +170,8 @@ const music: AudioAsset[] = MUSIC_KEYS.map((k) => ({ key: `music_${k}`, paths: [
 export const SFX_KEYS = [
   'button', 'cancel', 'move', 'merge', 'attack', 'crit', 'enemyHit', 'playerHit', 'coin', 'heal', 'explosion', 'alert', 'magic', 'poison',
   'powerup', 'levelup', 'victory', 'defeat',
+  // Game-feel pass: layered combat + roguelite stingers (mixed via SFX_MIX in data/juice.ts).
+  'tileSlide', 'impact', 'slashHeavy', 'launch', 'enemyDeath', 'waveClear', 'bossAlert', 'bossDefeat', 'upgradePick', 'goldReward', 'sparkle',
 ] as const;
 export type SfxKey = (typeof SFX_KEYS)[number];
 const sfx: AudioAsset[] = SFX_KEYS.map((k) => ({ key: `sfx_${k}`, paths: [`audio/sfx/${k}.wav`] }));

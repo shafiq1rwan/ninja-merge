@@ -108,11 +108,15 @@ export const RUN = {
   upgradeChoices: 3,
 } as const;
 
+/**
+ * Shared animation timings. Tile/merge/impact timings live in data/juice.ts (the game-feel pass);
+ * these are the values still shared with input and the floating-text default.
+ */
 export const ANIM = {
-  slideMs: 110,
+  slideMs: 100,
   mergePulseMs: 140,
-  spawnMs: 120,
-  damageNumberMs: 800,
-  enemyAttackMs: 380,
+  spawnMs: 110,
+  damageNumberMs: 560,
+  enemyAttackMs: 300,
   swipeThresholdPx: 48, // logical pixels
 } as const;

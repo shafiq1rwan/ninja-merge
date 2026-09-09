@@ -18,7 +18,7 @@ _Placeholder - add screenshots to `docs/screenshots/` and link them here._
 
 - **The board** is a 4x4 grid. Swipe (or press an arrow key) and every tile slides that way. Two ninjas of the same rank merge into the next rank. A tile can only merge once per move (`1 1 1 1` becomes `2 2`, never `3`).
 - **Ranks are ninja forms**, not numbers: Novice -> Apprentice -> Ninja -> Veteran Ninja -> Elite Ninja -> Samurai -> Ninja Master -> Shadow Master -> Legendary Ninja -> Shinobi Lord -> Dragon Shinobi. Each tile shows a small rank badge.
-- **Every merge damages the enemy.** Bigger merges hit harder (damage table in `src/data/balance.ts`). Several merges in one swipe trigger a **COMBO** multiplier; there is a chance of a **CRITICAL** hit.
+- **Every merge damages the enemy.** Bigger merges hit harder (damage table in `src/data/balance.ts`). Several merges in one swipe trigger a **COMBO** multiplier; there is a chance of a **CRITICAL** hit. The swipe reads as one chain: tiles slide and compress, the merged ninja pops, your ninja swings, the blade crosses the screen, the hit lands with a brief freeze, and the damage number and HP bar move together (~325ms from swipe to impact).
 - **Enemies attack on a counter** ("Enemy attack in: 2"). Different enemies attack at different speeds, so you can plan combos around it.
 - **Special tiles**: a **Potion** heals you and a **Bomb** clears the surrounding cells (and damages the enemy). Push one against the board edge, or tap it, to activate. They never merge with ninjas.
 - **Stuck board?** Instead of game over you lose 25% max HP and your weakest ninjas are cleared so the battle continues.
@@ -198,7 +198,8 @@ Every number that matters is in `src/data/balance.ts`: spawn probabilities (90% 
 ## Accessibility
 
 - Nothing important is colour-only: HP bars carry numbers, the enemy counter is text, statuses are labelled.
-- Reduced Motion setting shortens animations, removes screen shake, drifting particles and large scale pops.
+- **Reduced Motion** shortens animations, removes screen shake, hit-stop, particles, ambient motion and large scale pops. Every gameplay signal (merge confirmation, damage numbers, HP changes) stays.
+- **Extra effects** can be turned off to trim particles, camera movement and background motion while keeping full-speed animation.
 - Screen shake and damage numbers can be toggled independently.
 - Music and SFX can be muted or adjusted separately; audio only starts after the first tap (mobile autoplay rules).
 

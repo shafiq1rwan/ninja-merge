@@ -1,8 +1,19 @@
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../config/gameConfig';
 import { BATTLE_LAYOUT, ENVIRONMENTS, GROUND_TILE_COUNT, type BattleEnvironment, type Placement } from '../data/battleAssets';
+import { effects } from '../settings/EffectsSettings';
 import type { RegionDef } from '../types';
 import { DEPTH } from '../ui/theme';
+
+/** One ambient look per dungeon: sprite, tint, drift direction and speed. Kept deliberately sparse. */
+const AMBIENT: Record<RegionDef['theme'], { key: string; tint?: number; rise?: boolean; msMin: number; msMax: number; alpha: number }> = {
+  forest: { key: 'fx_Leaf', msMin: 7000, msMax: 11000, alpha: 0.75 },
+  cave: { key: 'fx_Spark', tint: 0x8fa8c4, msMin: 9000, msMax: 14000, alpha: 0.5 },
+  mountain: { key: 'fx_Snow', tint: 0xdfe8f2, msMin: 9000, msMax: 13000, alpha: 0.5 },
+  desert: { key: 'fx_Spark', tint: 0xffd97a, msMin: 6000, msMax: 10000, alpha: 0.45 },
+  snow: { key: 'fx_Snow', msMin: 8000, msMax: 12000, alpha: 0.7 },
+  castle: { key: 'fx_Spark', tint: 0xff8a5b, rise: true, msMin: 7000, msMax: 11000, alpha: 0.6 },
+};
 
 /**
  * The battle environment, built from exactly three depth layers:
@@ -34,6 +45,43 @@ export class BattleBackdrop {
 
     // Layer 2: midground props
     for (const p of env.mid) this.placeProp(scene, p, L.groundY + L.propSink, DEPTH.decor, undefined, 1, true);
+
+    // Ambient motion so the scene is not frozen. Confined above the ground line - never over the board.
+    this.ambient(scene, theme, L.groundY + 40);
+  }
+
+  /**
+   * A handful of slow drifting motes in the environment band. Count comes from the effects setting
+   * (zero under Reduced Motion / Effects: Low) and each one simply loops its own tween.
+   */
+  private ambient(scene: Phaser.Scene, theme: RegionDef['theme'], maxY: number): void {
+    const spec = AMBIENT[theme] ?? AMBIENT.forest;
+    const count = effects.ambientCount;
+    if (count <= 0 || !scene.textures.exists(spec.key)) return;
+    const frames = Math.max(1, scene.textures.get(spec.key).frameTotal - 1);
+    for (let i = 0; i < count; i++) {
+      const img = scene.add
+        .image(Phaser.Math.Between(20, GAME_WIDTH - 20), Phaser.Math.Between(0, maxY), spec.key, Phaser.Math.Between(0, frames - 1))
+        .setScale(2)
+        .setAlpha(spec.alpha)
+        .setDepth(DEPTH.decor + 1);
+      if (spec.tint !== undefined) img.setTint(spec.tint);
+      const loop = (first: boolean) => {
+        if (!img.active) return;
+        const startY = first ? img.y : spec.rise ? maxY + 10 : -10;
+        img.setPosition(Phaser.Math.Between(20, GAME_WIDTH - 20), startY);
+        scene.tweens.add({
+          targets: img,
+          y: spec.rise ? -10 : maxY + 10,
+          x: img.x + Phaser.Math.Between(-70, 70),
+          angle: spec.rise ? 0 : Phaser.Math.Between(-120, 120),
+          duration: Phaser.Math.Between(spec.msMin, spec.msMax),
+          ease: 'Sine.easeInOut',
+          onComplete: () => loop(false),
+        });
+      };
+      scene.time.delayedCall(i * 900, () => loop(true));
+    }
   }
 
   private drawSky(g: Phaser.GameObjects.Graphics, env: BattleEnvironment, groundY: number): void {

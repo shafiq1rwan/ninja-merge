@@ -1,10 +1,12 @@
 import Phaser from 'phaser';
 import { charFaceKey, HERO_CHARACTER } from '../data/assets';
 import { rankName } from '../data/ranks';
+import { effects } from '../settings/EffectsSettings';
 import { audio } from '../systems/AudioSystem';
 import { Button } from '../ui/Button';
 import { HealthBar } from '../ui/HealthBar';
 import { motion } from '../ui/motion';
+import { popText, tweenNumber } from '../ui/NumberTween';
 import { Panel } from '../ui/Panel';
 import { COLORS, DEPTH, TEXT, textStyle } from '../ui/theme';
 
@@ -24,6 +26,11 @@ export class PlayerHud extends Phaser.GameObjects.Container {
   private portraitY: number;
   private hpX: number;
   private hpY: number;
+  private xpX: number;
+  private xpY: number;
+  private goldX: number;
+  private goldY: number;
+  private displayedGold = 0;
 
   constructor(scene: Phaser.Scene, top: number, height: number, onPause: () => void) {
     super(scene, 0, 0);
@@ -64,15 +71,18 @@ export class PlayerHud extends Phaser.GameObjects.Container {
     this.levelText = scene.add.text(colX, rowB, 'Lv 1', textStyle(20, { color: TEXT.light, align: 'left' })).setOrigin(0, 0.5);
     this.add(this.levelText);
     const xpW = hpW - 62;
-    this.xpBar = new HealthBar(scene, colX + 62 + xpW / 2, rowB, { width: xpW, height: 20, fillColor: COLORS.blue, lowColor: COLORS.blue, label: 'XP', fontSize: 14 });
+    this.xpX = colX + 62 + xpW / 2;
+    this.xpY = rowB;
+    this.xpBar = new HealthBar(scene, this.xpX, rowB, { width: xpW, height: 20, fillColor: COLORS.blue, lowColor: COLORS.blue, label: 'XP', fontSize: 14 });
     this.add(this.xpBar);
 
     // Right column: gold + status / rank
-    const goldX = colX + hpW + 24;
-    const coin = scene.add.image(goldX + 10, rowA, 'item_GoldCoin').setScale(3);
-    this.goldText = scene.add.text(goldX + 30, rowA, '0', textStyle(22, { color: TEXT.gold, align: 'left' })).setOrigin(0, 0.5);
+    this.goldX = colX + hpW + 24;
+    this.goldY = rowA;
+    const coin = scene.add.image(this.goldX + 10, rowA, 'item_GoldCoin').setScale(3);
+    this.goldText = scene.add.text(this.goldX + 30, rowA, '0', textStyle(22, { color: TEXT.gold, align: 'left' })).setOrigin(0, 0.5);
     this.add([coin, this.goldText]);
-    this.rankText = scene.add.text(goldX, rowB, 'Rank: -', textStyle(16, { color: TEXT.muted, align: 'left', wordWrapWidth: Math.max(60, colRight - goldX) })).setOrigin(0, 0.5);
+    this.rankText = scene.add.text(this.goldX, rowB, 'Rank: -', textStyle(16, { color: TEXT.muted, align: 'left', wordWrapWidth: Math.max(60, colRight - this.goldX) })).setOrigin(0, 0.5);
     this.add(this.rankText);
     this.statusText = scene.add.text(colRight, rowA, '', textStyle(16, { color: TEXT.purple, align: 'right' })).setOrigin(1, 0.5);
     this.add(this.statusText);
@@ -90,8 +100,17 @@ export class PlayerHud extends Phaser.GameObjects.Container {
     this.xpBar.set(xp, needed, false);
   }
 
-  setGold(gold: number): void {
-    this.goldText.setText(`${gold}`);
+  /** Set gold; by default the displayed number counts up rather than snapping. */
+  setGold(gold: number, animate = false): void {
+    if (!animate) {
+      this.displayedGold = gold;
+      this.goldText.setText(`${gold}`);
+      return;
+    }
+    const from = this.displayedGold;
+    this.displayedGold = gold;
+    popText(this.scene, this.goldText);
+    tweenNumber(this.scene, from, gold, (v) => this.goldText.setText(`${v}`));
   }
 
   setHighestRank(rank: number): void {
@@ -102,22 +121,61 @@ export class PlayerHud extends Phaser.GameObjects.Container {
     this.statusText.setText(text);
   }
 
-  /** Portrait flash + shake when the player is hit. */
-  hitReaction(): void {
-    audio.play('playerHit');
-    motion.flashSprite(this.scene, this.portrait, 0xff6b5b, 120);
-    motion.shake(this.scene, 0.004, 140);
+  /** The ninja visibly swings: portrait lunges toward the enemy and flashes. */
+  attackReaction(): void {
+    if (effects.reduced) return;
     this.scene.tweens.killTweensOf(this.portrait);
     this.portrait.setPosition(this.portraitX, this.portraitY);
-    this.scene.tweens.add({ targets: this.portrait, x: this.portraitX + 6, duration: 40, yoyo: true, repeat: 2 });
+    this.scene.tweens.add({
+      targets: this.portrait,
+      y: this.portraitY - 7,
+      scale: 2.15,
+      duration: 70,
+      yoyo: true,
+      ease: 'Quad.easeOut',
+      onComplete: () => this.portrait.setPosition(this.portraitX, this.portraitY).setScale(2),
+    });
+  }
+
+  /** Portrait flash + shake when the player is hit. */
+  hitReaction(): void {
+    motion.flashSprite(this.scene, this.portrait, 0xff6b5b, 120);
+    this.scene.tweens.killTweensOf(this.portrait);
+    this.portrait.setPosition(this.portraitX, this.portraitY);
+    this.scene.tweens.add({
+      targets: this.portrait,
+      x: this.portraitX + effects.px(6),
+      duration: 40,
+      yoyo: true,
+      repeat: 2,
+      onComplete: () => this.portrait.setPosition(this.portraitX, this.portraitY),
+    });
   }
 
   healReaction(): void {
     motion.flashSprite(this.scene, this.portrait, 0x8fe3c8, 140);
   }
 
+  /** Level-up flourish on the XP bar row. */
+  levelUpReaction(): void {
+    audio.play('levelup');
+    popText(this.scene, this.levelText, 1.4);
+  }
+
   /** Where player-side floating numbers spawn: on the HP bar, rising within the HUD card. */
   get hpBarPoint(): { x: number; y: number } {
     return { x: this.hpX, y: this.hpY + 14 };
+  }
+
+  get portraitPoint(): { x: number; y: number } {
+    return { x: this.portraitX, y: this.portraitY };
+  }
+
+  get goldPoint(): { x: number; y: number } {
+    return { x: this.goldX + 10, y: this.goldY };
+  }
+
+  get xpPoint(): { x: number; y: number } {
+    return { x: this.xpX, y: this.xpY };
   }
 }

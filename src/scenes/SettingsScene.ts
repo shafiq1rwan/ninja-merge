@@ -38,7 +38,9 @@ export class SettingsScene extends Phaser.Scene {
     display.text('Display & Accessibility', 26, { color: TEXT.gold });
     display.object(new Toggle(this, display.x, 0, display.innerWidth, 'Screen shake', s.screenShake, (v) => { s.screenShake = v; save.persist(); }), 56);
     display.object(new Toggle(this, display.x, 0, display.innerWidth, 'Damage numbers', s.damageNumbers, (v) => { s.damageNumbers = v; save.persist(); }), 56);
+    display.object(new Toggle(this, display.x, 0, display.innerWidth, 'Extra effects', s.effectsLevel !== 'low', (v) => { s.effectsLevel = v ? 'normal' : 'low'; save.persist(); }), 56);
     display.object(new Toggle(this, display.x, 0, display.innerWidth, 'Reduced motion', s.reducedMotion, (v) => { s.reducedMotion = v; save.persist(); }), 56);
+    display.text('Extra effects covers particles and camera movement. Reduced motion also shortens animations.', 17, { color: TEXT.muted });
     display.finish();
 
     // Save data

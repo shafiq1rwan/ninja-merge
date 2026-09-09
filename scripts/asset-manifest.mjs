@@ -166,6 +166,18 @@ export const sfxFiles = {
   levelup: 'Jingles/LevelUp1.wav',
   victory: 'Jingles/Success1.wav',
   defeat: 'Jingles/GameOver.wav',
+  // Game-feel pass: separate layers so movement, merge, swing and impact are distinct sounds.
+  tileSlide: 'Sounds/Menu/Move3.wav',
+  impact: 'Sounds/Hit & Impact/Impact2.wav',
+  slashHeavy: 'Sounds/Whoosh & Slash/Slash3.wav',
+  launch: 'Sounds/Whoosh & Slash/Launch.wav',
+  enemyDeath: 'Sounds/Magic & Skill/Spirit.wav',
+  waveClear: 'Jingles/Success2.wav',
+  bossAlert: 'Sounds/Alert/Alert4.wav',
+  bossDefeat: 'Jingles/Success4.wav',
+  upgradePick: 'Sounds/Bonus/PowerUp2.wav',
+  goldReward: 'Sounds/Bonus/Gold1.wav',
+  sparkle: 'Sounds/Bonus/Bonus3.wav',
 };
 for (const [key, f] of Object.entries(sfxFiles)) entries.push([`Audio/${f}`, `audio/sfx/${key}.wav`]);
 

@@ -31,7 +31,8 @@ Logical resolution is 720x1280 portrait, `Scale.FIT` + `CENTER_BOTH`, `pixelArt:
 - `src/data/*` - pure data and constants. **Every tunable number lives in `data/balance.ts`** (spawn odds, damage table, combo/crit, enemy scaling, XP curve, upgrade costs, animation timings). Enemies, bosses, stages, items, ranks are declarative records. `data/assets.ts` is the single texture/audio key registry: keys, paths, frame sizes, decor crop rectangles, fonts. Never hardcode an asset path in a scene.
 - `src/systems/*` - game logic with **no Phaser dependency** except `AudioSystem` and `InputSystem`: `BoardSystem` (grid + move/merge/spawn), `CombatSystem` (damage, enemy counter, boss abilities, rewards), `SaveSystem`, `ProgressionSystem`, `EquipmentSystem`, `Rng` (seeded). These are what the Vitest suite tests; keep them Phaser-free so tests stay runnable in Node.
 - `src/entities/*` - Phaser views: `TileView`, `BoardView`, `EnemyView`, `PlayerHud`.
-- `src/scenes/*` - one class per screen; `src/ui/*` - reusable widgets (`Card`, `Button`, `Panel`, `Modal`, `HealthBar`, `Slider`, `Toggle`, `Toast`, `FloatingText`, `Background`) plus `theme.ts` and `motion.ts`.
+- `src/effects/*` - presentation-only systems (`CombatEffects`, `MergeEffects`, `DamageNumbers`, `ParticleEffects`, `CameraEffects`, `RewardEffects`); `src/settings/EffectsSettings.ts` - the effects/reduced-motion budget.
+- `src/scenes/*` - one class per screen; `src/ui/*` - reusable widgets (`Card`, `Button`, `Panel`, `Modal`, `HealthBar`, `Slider`, `Toggle`, `Toast`, `FloatingText`, `WaveBanner`, `ComboIndicator`, `NumberTween`, `Background`) plus `theme.ts` and `motion.ts`.
 - Singletons: `save`, `progression`, `equipment`, `audio` are module-level instances imported directly; scenes never construct them.
 
 ### Board is the source of truth
@@ -47,6 +48,17 @@ Logical resolution is 720x1280 portrait, `Scale.FIT` + `CENTER_BOTH`, `pixelArt:
 ### Save format
 
 `SaveSystem.parse` runs `MIGRATIONS[fromVersion]` in sequence up to `SAVE_VERSION`, then deep-merges over `defaultSave()`. To change the save shape: bump `SAVE_VERSION`, add a migration entry, and extend `defaultSave()`. Autosave points: victory/defeat, purchase, equip/unequip/sell, upgrade, stage unlock.
+
+### Game feel (effects layer)
+
+Presentation is a separate layer and must stay that way: gameplay computes final numbers, then tells `effects/*` what happened. `CombatEffects.attackOccurred(report, onImpact)` owns the whole merge -> swing -> impact chain (wind-up, weapon streak, hit-stop, recoil, particles, damage numbers, combo); `onImpact` fires on the impact frame and is where the caller drops the HP bar. Never make a damage, reward or state value depend on an animation finishing.
+
+- **All timings and intensities live in `data/juice.ts`** (`JUICE`) plus the audio mix (`SFX_MIX`, applied centrally in `AudioSystem.play`). `data/balance.ts` stays gameplay-only. Budget: merge -> impact 250-450ms (currently ~325, ~220 under reduced motion), tile slide 80-130ms, hit-stop <= 90ms, shake only for crits/bombs/bosses.
+- **`settings/EffectsSettings.ts` (`effects`) is the only gate** for Reduced Motion and Effects: Low - use `effects.ms/pop/px/particles/hitStop/ambientCount/tileFlourishes` rather than reading settings directly. `ui/motion.ts` is the thin scene-facing wrapper. Both modes may remove decoration; neither may remove information (damage numbers, HP changes, merge confirmation).
+- **Pooling**: `ParticleEffects` (square motes + reward icons) and `FloatingText`/`DamageNumbers` reuse objects - never create effect objects per frame. A battle peaks around 30 live tweens; keep it there.
+- **Hit-stop** sets `scene.tweens.timeScale`/`time.timeScale` to 0 and restores on a real-time timer, plus unconditionally on scene shutdown (`CameraEffects.release`) - a restarted scene must never start frozen.
+- **Banners**: waves/elites/bosses are announced by `ui/WaveBanner` *inside* BattleScene (`playIntro`), which keeps input free for normal and elite waves and only holds it for the ~1.7s boss entrance. `WaveIntroScene` is the once-per-run dungeon intro only.
+- Damage readouts show up to three separate numbers; beyond that the swing reports one total (the combo indicator carries the count) so numbers never stack.
 
 ### Dungeon runs (roguelite loop)
 

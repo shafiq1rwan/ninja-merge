@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import type { SfxKey } from '../data/assets';
+import { SFX_MIX } from '../data/juice';
 import { save } from './SaveSystem';
 
 /**
@@ -75,10 +76,14 @@ export class AudioSystem {
     }
   }
 
+  /**
+   * Play a sound effect. Each key has a base level in SFX_MIX so several layers can fire together
+   * (slide + merge + swing + impact) without any of them shouting over the others.
+   */
   play(key: SfxKey, opts: { volume?: number; rate?: number; detune?: number } = {}): void {
     const sound = this.sound;
     if (!sound || sound.locked) return;
-    const vol = this.sfxVolume * (opts.volume ?? 1);
+    const vol = this.sfxVolume * (SFX_MIX[key] ?? 1) * (opts.volume ?? 1);
     if (vol <= 0) return;
     const full = `sfx_${key}`;
     if (!this.game?.cache.audio.exists(full)) return;

@@ -12,6 +12,8 @@ export interface Settings {
   screenShake: boolean;
   damageNumbers: boolean;
   reducedMotion: boolean;
+  /** Visual effect budget: 'low' trims particles, camera movement and ambient motion. */
+  effectsLevel: 'low' | 'normal';
 }
 
 export interface Statistics {
@@ -94,6 +96,7 @@ export function defaultSave(): SaveData {
       screenShake: true,
       damageNumbers: true,
       reducedMotion: false,
+      effectsLevel: 'normal',
     },
     stats: {
       battlesWon: 0, battlesLost: 0, bossesDefeated: 0, totalMerges: 0, totalDamage: 0, goldEarned: 0,

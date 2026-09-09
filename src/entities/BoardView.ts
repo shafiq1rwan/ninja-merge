@@ -1,5 +1,8 @@
 import Phaser from 'phaser';
-import { ANIM } from '../data/balance';
+import { JUICE } from '../data/juice';
+import { mergeEffects } from '../effects/MergeEffects';
+import type { ParticleEffects } from '../effects/ParticleEffects';
+import { effects } from '../settings/EffectsSettings';
 import { audio } from '../systems/AudioSystem';
 import type { BoardSystem } from '../systems/BoardSystem';
 import type { ActivationEvent, Direction, MoveResult, Tile } from '../types';
@@ -13,6 +16,10 @@ export const BOARD_GAP = 12;
 /**
  * Renders a BoardSystem and animates MoveResults. The logical board is the source of truth;
  * after every animation `sync()` reconciles views with the state so nothing can drift.
+ *
+ * The move animation is deliberately short so the attack can follow almost immediately:
+ *   slide (~100ms) -> squash the merging pair (~42ms) -> pop the upgraded tile + burst -> spawn.
+ * `animateMove` resolves as soon as the board is visually safe, not when every tween has finished.
  */
 export class BoardView {
   readonly scene: Phaser.Scene;
@@ -23,12 +30,16 @@ export class BoardView {
   readonly container: Phaser.GameObjects.Container;
   private views = new Map<number, TileView>();
   private frame: Phaser.GameObjects.Graphics;
+  private particles?: ParticleEffects;
+  /** Set while a merge chain is playing, so callers know the visuals are mid-flight. */
+  private lastMergeRanks: number[] = [];
 
-  constructor(scene: Phaser.Scene, board: BoardSystem, x0: number, y0: number) {
+  constructor(scene: Phaser.Scene, board: BoardSystem, x0: number, y0: number, particles?: ParticleEffects) {
     this.scene = scene;
     this.board = board;
     this.x0 = x0;
     this.y0 = y0;
+    this.particles = particles;
     this.pixelSize = board.size * TILE_SIZE + (board.size + 1) * BOARD_GAP;
     this.container = scene.add.container(0, 0).setDepth(DEPTH.board);
 
@@ -66,6 +77,11 @@ export class BoardView {
     return { row, col };
   }
 
+  /** Ranks produced by the most recent animateMove (for rank announcements). */
+  get mergedRanks(): number[] {
+    return this.lastMergeRanks;
+  }
+
   private createView(tile: Tile, animateIn: boolean): TileView {
     const { x, y } = this.cellCenter(tile.row, tile.col);
     const v = new TileView(this.scene, x, y, tile);
@@ -73,7 +89,7 @@ export class BoardView {
     this.views.set(tile.id, v);
     if (animateIn) {
       v.setScale(0);
-      this.scene.tweens.add({ targets: v, scale: 1, duration: motion.ms(ANIM.spawnMs), ease: 'Back.easeOut' });
+      this.scene.tweens.add({ targets: v, scale: 1, duration: effects.ms(JUICE.tile.spawnMs), ease: 'Back.easeOut' });
     }
     return v;
   }
@@ -104,49 +120,86 @@ export class BoardView {
     for (const id of [...this.views.keys()]) if (!present.has(id)) this.removeView(id);
   }
 
-  /** Animate a full MoveResult: slides -> merges -> activations -> expiry -> spawn. */
+  /**
+   * Animate a full MoveResult. Resolves when the board is safe to act on.
+   */
   async animateMove(result: MoveResult): Promise<void> {
-    const slideMs = motion.ms(ANIM.slideMs);
+    const slideMs = effects.ms(JUICE.tile.slideMs);
+    this.lastMergeRanks = result.merges.map((m) => m.rank);
+    const mergingIds = new Set<number>(result.merges.flatMap((m) => m.fromIds));
+
+    // 1. Slides. Tiles that are not merging get a tiny settle on arrival.
+    if (result.moves.length) audio.play('tileSlide', { detune: Phaser.Math.Between(-60, 60) });
     const slides: Promise<void>[] = [];
     for (const m of result.moves) {
       const v = this.views.get(m.id);
       if (!v) continue;
       const { x, y } = this.cellCenter(m.toRow, m.toCol);
-      slides.push(tweenAsync(this.scene, { targets: v, x, y, duration: slideMs, ease: 'Quad.easeOut' }));
+      const settles = !mergingIds.has(m.id);
+      slides.push(
+        tweenAsync(this.scene, {
+          targets: v,
+          x,
+          y,
+          duration: slideMs,
+          ease: 'Quad.easeOut',
+          onComplete: () => { if (settles) v.settle(); },
+        }),
+      );
     }
     await Promise.all(slides);
 
-    // Merges: drop the two sources, pop the result.
-    if (result.merges.length) audio.play('merge', { detune: Math.min(600, result.merges.length * 120) });
-    const pops: Promise<void>[] = [];
-    for (const merge of result.merges) {
+    // 2. Compression of each merging pair.
+    if (result.merges.length) {
+      const squash = effects.reduced ? 1 : JUICE.merge.squash;
+      const squashes: Promise<void>[] = [];
+      for (const id of mergingIds) {
+        const v = this.views.get(id);
+        if (v) squashes.push(tweenAsync(this.scene, { targets: v, scaleX: squash, scaleY: squash, duration: effects.ms(JUICE.merge.squashMs), ease: 'Quad.easeIn' }));
+      }
+      await Promise.all(squashes);
+    }
+
+    // 3. Merges: swap in the upgraded tile with a pop, a small burst and a rising pitch per merge.
+    result.merges.forEach((merge, i) => {
       this.removeView(merge.fromIds[0]);
       this.removeView(merge.fromIds[1]);
       const tile = this.board.tileAt(merge.row, merge.col);
-      if (!tile) continue;
+      if (!tile) return;
       const v = this.createView(tile, false);
-      v.setScale(motion.pop(1.25));
-      pops.push(tweenAsync(this.scene, { targets: v, scale: 1, duration: motion.ms(ANIM.mergePulseMs), ease: 'Back.easeOut' }));
+      v.setScale(mergeEffects.popScale(merge.rank));
+      this.scene.tweens.add({ targets: v, scale: 1, duration: effects.ms(JUICE.merge.popMs), ease: 'Back.easeOut' });
+      const c = this.cellCenter(merge.row, merge.col);
+      if (this.particles) mergeEffects.burst(this.particles, c.x, c.y, merge.rank);
       this.glow(merge.row, merge.col, v.glowColor);
-    }
+      audio.play('merge', { detune: mergeEffects.mergeDetune(i), volume: mergeEffects.isHigh(merge.rank) ? 1.15 : 1 });
+    });
 
-    // Activations (potion / bomb pushed to an edge)
+    // 4. Special tiles that reached an edge, then expiring locks (staggered).
     for (const act of result.activations) this.playActivation(act);
-
-    // Expired locks fade
-    for (const t of result.expired) {
+    result.expired.forEach((t, i) => {
       const v = this.views.get(t.id);
-      if (v) pops.push(tweenAsync(this.scene, { targets: v, alpha: 0, scale: 0.7, duration: motion.ms(140), onComplete: () => this.removeView(t.id) }));
-    }
-    await Promise.all(pops);
+      if (!v) return;
+      this.scene.tweens.add({
+        targets: v,
+        alpha: 0,
+        scale: 0.7,
+        delay: i * 40,
+        duration: effects.ms(140),
+        onComplete: () => this.removeView(t.id),
+      });
+    });
 
-    // Spawn
+    // 5. Spawn runs in parallel - the player never waits for it.
     if (result.spawned) this.createView(result.spawned, true);
     this.sync(true);
-    if (result.spawned) await delay(this.scene, motion.ms(ANIM.spawnMs) * 0.6);
+    await delay(this.scene, effects.ms(result.merges.length ? JUICE.merge.safeMs : 20));
   }
 
-  /** Visual for an activation (also used for tap activations). Views are removed; call sync() afterwards. */
+  /**
+   * Visual for an activation (also used for tap activations). Views are removed; call sync() afterwards.
+   * Bomb destruction is staggered by ring distance so a blast reads as a chain, not one flat wipe.
+   */
   playActivation(act: ActivationEvent): void {
     const { x, y } = this.cellCenter(act.row, act.col);
     if (act.kind === 'bomb') {
@@ -155,11 +208,28 @@ export class BoardView {
         const fx = this.scene.add.sprite(x, y, 'fx_Explosion').setScale(5).setDepth(DEPTH.fx).play('fx_explosion');
         fx.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => fx.destroy());
       }
-      motion.shake(this.scene, 0.006, 160);
+      if (this.particles) {
+        this.particles.burst(x, y, { count: 12, color: 0xff8a5b, size: 8, speed: 150, lifeMs: 360 });
+      }
+      motion.shake(this.scene, JUICE.shake.bomb, 130);
       for (const d of act.destroyed) {
         const v = this.views.get(d.id);
         if (!v) continue;
-        this.scene.tweens.add({ targets: v, alpha: 0, scale: 0.4, angle: Phaser.Math.Between(-40, 40), duration: motion.ms(200), onComplete: () => this.removeView(d.id) });
+        const ring = Math.max(Math.abs(d.row - act.row), Math.abs(d.col - act.col));
+        const stagger = effects.reduced ? 0 : ring * JUICE.stagger.bombRingMs;
+        this.scene.tweens.add({
+          targets: v,
+          alpha: 0,
+          scale: 0.4,
+          angle: effects.reduced ? 0 : Phaser.Math.Between(-40, 40),
+          delay: stagger,
+          duration: effects.ms(200),
+          onComplete: () => this.removeView(d.id),
+        });
+        if (this.particles && !effects.reduced) {
+          const c = this.cellCenter(d.row, d.col);
+          this.scene.time.delayedCall(stagger, () => this.particles?.burst(c.x, c.y, { count: 4, color: 0xffb833, size: 6, speed: 70, lifeMs: 240 }));
+        }
       }
     } else {
       audio.play('heal');
@@ -167,26 +237,42 @@ export class BoardView {
         const fx = this.scene.add.sprite(x, y, 'fx_Aura').setScale(6).setDepth(DEPTH.fx).setTint(0x8fe3c8).play('fx_aura');
         this.scene.time.delayedCall(500, () => fx.destroy());
       }
+      this.particles?.rise(x, y, { count: 6, color: 0x8fe3c8 });
     }
     const v = this.views.get(act.id);
-    if (v) this.scene.tweens.add({ targets: v, alpha: 0, scale: 1.3, duration: motion.ms(160), onComplete: () => this.removeView(act.id) });
+    if (v) this.scene.tweens.add({ targets: v, alpha: 0, scale: 1.3, duration: effects.ms(160), onComplete: () => this.removeView(act.id) });
   }
 
-  /** Shrink-and-fade a set of tiles (board-blocked penalty). */
+  /** Shrink-and-fade a set of tiles, staggered in groups (board-blocked penalty). */
   async animateRemoval(tiles: Tile[]): Promise<void> {
+    const step = effects.reduced ? 0 : Math.min(JUICE.stagger.clearMs, JUICE.stagger.clearMaxMs / Math.max(1, tiles.length));
     const ps: Promise<void>[] = [];
-    for (const t of tiles) {
+    tiles.forEach((t, i) => {
       const v = this.views.get(t.id);
-      if (!v) continue;
-      ps.push(tweenAsync(this.scene, { targets: v, alpha: 0, scale: 0.3, duration: motion.ms(260), ease: 'Quad.easeIn', onComplete: () => this.removeView(t.id) }));
-    }
+      if (!v) return;
+      ps.push(
+        tweenAsync(this.scene, {
+          targets: v,
+          alpha: 0,
+          scale: 0.3,
+          delay: i * step,
+          duration: effects.ms(200),
+          ease: 'Quad.easeIn',
+          onComplete: () => this.removeView(t.id),
+        }),
+      );
+      if (this.particles && !effects.reduced) {
+        const c = this.cellCenter(t.row, t.col);
+        this.scene.time.delayedCall(i * step, () => this.particles?.burst(c.x, c.y, { count: 3, color: 0x8a8078, size: 5, speed: 50, lifeMs: 220 }));
+      }
+    });
     await Promise.all(ps);
     this.sync(true);
   }
 
   /** Brief highlight square behind a merged tile. */
   private glow(row: number, col: number, color: number): void {
-    if (motion.reduced) return;
+    if (effects.reduced) return;
     const { x, y } = this.cellCenter(row, col);
     const r = this.scene.add.rectangle(x, y, TILE_SIZE, TILE_SIZE, color, 0.35).setDepth(DEPTH.board + 1);
     this.container.add(r);
@@ -200,6 +286,7 @@ export class BoardView {
     this.scene.tweens.killTweensOf(this.container);
     this.container.setPosition(0, 0);
     this.scene.tweens.add({ targets: this.container, x: dx, y: dy, duration: 50, yoyo: true, ease: 'Quad.easeOut' });
+    audio.play('cancel', { volume: 0.35 });
   }
 
   /** Pulse a specific tile (e.g. tapped special tile that did nothing). */

@@ -1,16 +1,24 @@
 import Phaser from 'phaser';
 import { GAME_WIDTH, IS_DEV, SCENES } from '../config/gameConfig';
 import { BOARD } from '../data/balance';
+import { BATTLE_LAYOUT } from '../data/battleAssets';
 import { BOSSES } from '../data/bosses';
 import { ENEMIES } from '../data/enemies';
+import { JUICE } from '../data/juice';
 import { rankName } from '../data/ranks';
 import { getRegion, getStage, REGIONS } from '../data/stages';
 import { installDebugKeys } from '../debug/DebugKeys';
-import { BATTLE_LAYOUT } from '../data/battleAssets';
+import { CameraEffects } from '../effects/CameraEffects';
+import { CombatEffects, type AttackReport } from '../effects/CombatEffects';
+import { DamageNumbers } from '../effects/DamageNumbers';
+import { mergeEffects } from '../effects/MergeEffects';
+import { ParticleEffects } from '../effects/ParticleEffects';
+import { RewardEffects } from '../effects/RewardEffects';
 import { BattleBackdrop } from '../entities/BattleBackdrop';
 import { BoardView } from '../entities/BoardView';
 import { EnemyStatusCard, EnemyView } from '../entities/Enemy';
 import { PlayerHud } from '../entities/Player';
+import { effects } from '../settings/EffectsSettings';
 import { audio } from '../systems/AudioSystem';
 import { BoardSystem } from '../systems/BoardSystem';
 import { CombatSystem, type AttackBreakdown, type EnemyTurnEvent } from '../systems/CombatSystem';
@@ -21,12 +29,13 @@ import { runSystem, type WaveDef } from '../systems/RunSystem';
 import { save, type ActiveRun } from '../systems/SaveSystem';
 import type { ActivationEvent, Direction, EnemyDef, StageDef } from '../types';
 import { delay } from '../ui/async';
-import { FloatingText } from '../ui/FloatingText';
+import { ComboIndicator } from '../ui/ComboIndicator';
 import { fadeIn, goTo } from '../ui/Hud';
 import { Modal } from '../ui/Modal';
 import { motion } from '../ui/motion';
 import { flatPanel } from '../ui/Panel';
 import { toast } from '../ui/Toast';
+import { showBanner } from '../ui/WaveBanner';
 import { DEPTH, TEXT, textStyle } from '../ui/theme';
 
 export interface BattleData {
@@ -68,10 +77,16 @@ const L = {
   boardX: BATTLE_LAYOUT.board.x,
   boardY: BATTLE_LAYOUT.board.y,
   comboY: BATTLE_LAYOUT.comboY,
+  /** Transient banners sit over the enemy scene, never over the board or HUD. */
+  bannerY: 240,
 };
 
 /**
  * The core loop: swipe -> board resolves -> merges damage the enemy -> enemy turn ticks.
+ *
+ * Gameplay and presentation are kept apart: CombatSystem produces final numbers, then the
+ * effects/* layer is told what happened (see CombatEffects.attackOccurred). No damage, reward or
+ * progression value depends on an animation finishing.
  */
 export class BattleScene extends Phaser.Scene {
   private stage!: StageDef;
@@ -82,7 +97,6 @@ export class BattleScene extends Phaser.Scene {
   private enemyView!: EnemyView;
   private enemyCard!: EnemyStatusCard;
   private hud!: PlayerHud;
-  private floats!: FloatingText;
   private input2!: InputSystem;
   private busy = false;
   private ended = false;
@@ -90,6 +104,16 @@ export class BattleScene extends Phaser.Scene {
   private stageText!: Phaser.GameObjects.Text;
   /** Set when fighting inside a dungeon run. */
   private wave: WaveDef | null = null;
+  /** True when this move already announced a newly forged rank (so it is not named twice). */
+  private announcedThisMove = false;
+
+  // Presentation layer
+  private particles!: ParticleEffects;
+  private cameraFx!: CameraEffects;
+  private numbers!: DamageNumbers;
+  private combo!: ComboIndicator;
+  private fx!: CombatEffects;
+  private rewards!: RewardEffects;
 
   constructor() {
     super(SCENES.BATTLE);
@@ -141,6 +165,12 @@ export class BattleScene extends Phaser.Scene {
     if (curse) this.board.spawnModifiers = curse;
     this.board.start(2);
 
+    // Effects layer
+    this.particles = new ParticleEffects(this);
+    this.cameraFx = new CameraEffects(this);
+    this.numbers = new DamageNumbers(this, 16);
+    this.combo = new ComboIndicator(this, L.comboY);
+
     // Top: stage title, enemy on the ground line, status card beneath the scene
     flatPanel(this, GAME_WIDTH / 2, L.stageTitleY, 520, 48, 0x1a1008, 0.6, 12).setDepth(DEPTH.hud);
     this.stageText = this.add.text(GAME_WIDTH / 2, L.stageTitleY, `${region.name}  -  ${this.stage.name}`, textStyle(24, { color: this.wave?.kind === 'boss' ? TEXT.red : TEXT.gold })).setOrigin(0.5).setDepth(DEPTH.hud + 1);
@@ -148,7 +178,7 @@ export class BattleScene extends Phaser.Scene {
     this.enemyCard = new EnemyStatusCard(this, BATTLE_LAYOUT.status.top, BATTLE_LAYOUT.status.height, this.enemyDef, this.combat.enemy);
 
     // Board
-    this.boardView = new BoardView(this, this.board, L.boardX, L.boardY);
+    this.boardView = new BoardView(this, this.board, L.boardX, L.boardY, this.particles);
 
     // Bottom HUD
     this.hud = new PlayerHud(this, BATTLE_LAYOUT.hud.top, BATTLE_LAYOUT.hud.height, () => this.openPause());
@@ -157,27 +187,69 @@ export class BattleScene extends Phaser.Scene {
     this.hud.setGold(save.data.player.gold);
     this.hud.setHighestRank(this.board.highestRank);
 
-    this.floats = new FloatingText(this, 14);
+    this.fx = new CombatEffects(this, {
+      enemy: this.enemyView,
+      hud: this.hud,
+      particles: this.particles,
+      camera: this.cameraFx,
+      numbers: this.numbers,
+      combo: this.combo,
+      shoutY: L.comboY,
+    });
+    this.rewards = new RewardEffects(this, this.particles);
 
     // Input
     this.input2 = new InputSystem(this, { onMove: (d) => this.onMove(d), onTap: (x, y) => this.onTap(x, y) });
 
-    // First-ever battle: a short control hint over the scene (fades on its own).
+    // First-ever battle: a short control hint, held back so it never collides with the wave banner.
     if (save.data.stats.battlesWon === 0 && save.data.stats.battlesLost === 0 && !this.enemyDef.isBoss) {
-      toast(this, 'Swipe or use arrow keys - merge ninjas to strike!', TEXT.light, 120, 3500);
+      this.time.delayedCall(900, () => toast(this, 'Swipe or use arrow keys - merge ninjas to strike!', TEXT.light, 120, 3000));
     }
-    if (this.enemyDef.isBoss) this.announceBoss();
+    // Rank announcements are per run; a fresh run (or standalone battle) starts with a clean slate.
+    if (!this.wave || this.wave.wave === 1) mergeEffects.resetAnnouncements();
+
+    void this.playIntro();
 
     if (IS_DEV) installDebugKeys(this, this.debugApi());
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.input2.destroy());
   }
 
-  private announceBoss(): void {
-    const ability = this.enemyDef.abilities?.[0];
-    const desc = ability ? BattleScene.describeAbility(ability.type) : '';
-    const t = this.add.text(GAME_WIDTH / 2, L.comboY, `BOSS BATTLE\n${desc}`, textStyle(30, { color: TEXT.red })).setOrigin(0.5).setDepth(DEPTH.floating).setAlpha(0);
-    this.tweens.add({ targets: t, alpha: 1, duration: 300, yoyo: true, hold: 2200, onComplete: () => t.destroy() });
-    audio.play('alert');
+  // ------------------------------------------------------------------ intros
+
+  /**
+   * Wave / elite / boss opening. Normal and elite waves keep the player in control immediately;
+   * only a boss entrance holds input, and only for ~1.7s.
+   */
+  private async playIntro(): Promise<void> {
+    const kind = this.wave?.kind ?? (this.enemyDef.isBoss ? 'boss' : 'normal');
+    if (kind === 'boss') {
+      this.input2.setEnabled(false);
+      audio.play('bossAlert');
+      const ability = this.enemyDef.abilities?.[0];
+      const entrance = Promise.all([this.enemyView.enter('boss'), this.enemyCard.appear()]);
+      await entrance;
+      await showBanner(this, {
+        title: 'BOSS WAVE',
+        subtitle: ability ? `${this.enemyDef.name}
+${BattleScene.describeAbility(ability.type)}` : this.enemyDef.name,
+        color: TEXT.red,
+        titleSize: 52,
+        durationMs: JUICE.banner.bossMs * 0.8,
+        dim: 0.35,
+        y: L.bannerY,
+      });
+      if (!this.ended) this.input2.setEnabled(true);
+      return;
+    }
+    if (!this.wave) return;
+    if (kind === 'elite') {
+      audio.play('alert');
+      void this.enemyView.enter('elite');
+      void showBanner(this, { title: `WAVE ${this.wave.wave}`, subtitle: 'ELITE', color: TEXT.purple, durationMs: JUICE.banner.eliteMs, dim: 0.22, y: L.bannerY });
+      return;
+    }
+    void this.enemyView.enter('normal');
+    void showBanner(this, { title: `WAVE ${this.wave.wave} / ${this.wave.total}`, durationMs: JUICE.banner.waveMs, y: L.bannerY });
   }
 
   static describeAbility(type: string): string {
@@ -201,7 +273,6 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
     this.busy = true;
-    audio.play('move', { volume: 0.35 });
 
     // Resolve combat logic up-front; animations follow the logical state.
     const attack = this.combat.resolvePlayerMove(result);
@@ -209,6 +280,7 @@ export class BattleScene extends Phaser.Scene {
 
     await this.boardView.animateMove(result);
     this.hud.setHighestRank(this.board.highestRank);
+    this.announceRanks();
 
     if (attack.merges > 0 || attack.bombDamage > 0) await this.showAttack(attack);
     if (attack.healed > 0) this.showHeal(attack.healed);
@@ -251,43 +323,56 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
+  /** First time a notable ninja form is forged in a run, name it. Never blocks play. */
+  private announceRanks(): void {
+    this.announcedThisMove = false;
+    const best = this.boardView.mergedRanks.reduce((m, r) => Math.max(m, r), 0);
+    if (best <= 0 || !mergeEffects.shouldAnnounce(best)) return;
+    this.announcedThisMove = true;
+    audio.play('sparkle');
+    void showBanner(this, {
+      title: mergeEffects.announceText(best),
+      color: TEXT.gold,
+      titleSize: 38,
+      durationMs: JUICE.banner.announceMs,
+      y: L.bannerY + 60,
+    });
+  }
+
+  /**
+   * Turn the resolved attack into feedback. The numbers shown are scaled to the damage actually
+   * dealt so the readout always matches the HP the enemy loses.
+   */
   private async showAttack(a: AttackBreakdown): Promise<void> {
-    const hp = this.enemyView.hitPoint;
-    const showNumbers = motion.damageNumbers;
-    this.enemyView.slashFx(a.crit);
-    const hitPromise = this.enemyView.hitReaction(a.crit);
-    if (showNumbers) {
-      a.hits.forEach((h, i) => {
-        const dmg = Math.round(h.damage * a.comboMult * (a.crit ? this.combat.player.stats.critMult : 1));
-        this.floats.show(hp.x + Phaser.Math.Between(-70, 70), hp.y - i * 10, `${dmg}`, {
-          size: a.crit ? 50 : 40,
-          color: a.crit ? TEXT.gold : '#ffffff',
-          delay: i * 70,
-          scaleFrom: a.crit ? 1.6 : 1.3,
-        });
-      });
-      if (a.bombDamage > 0) this.floats.show(hp.x, hp.y - 30, `${a.bombDamage}`, { size: 44, color: '#ff8a5b', scaleFrom: 1.5 });
+    const critMult = this.combat.player.stats.critMult;
+    const raw = a.hits.map((h) => h.damage * a.comboMult * (a.crit ? critMult : 1));
+    const rawTotal = raw.reduce((x, y) => x + y, 0) + a.bombDamage;
+    const scale = rawTotal > 0 ? a.dealt / rawTotal : 1;
+    const report: AttackReport = {
+      hits: a.hits.map((h, i) => ({ rank: h.rank, damage: Math.max(1, Math.round(raw[i] * scale)) })),
+      critical: a.crit,
+      merges: a.merges,
+      comboMult: a.comboMult,
+      bombDamage: a.bombDamage > 0 ? Math.max(1, Math.round(a.bombDamage * scale)) : 0,
+      bestRank: a.hits.reduce((m, h) => Math.max(m, h.rank), 0),
+      killed: this.combat.enemyDefeated,
+      isBoss: !!this.enemyDef.isBoss,
+    };
+
+    // The HP bar drops on the impact frame, so the bar, the numbers and the hit all land together.
+    await this.fx.attackOccurred(report, () => {
+      this.enemyCard.setHp(this.combat.enemy.hp, this.combat.enemy.maxHp);
+      this.refreshEnemyStatus();
+    });
+
+    // A single big merge is worth naming, unless a combo, crit or forge banner is already talking.
+    if (report.bestRank >= 4 && a.merges === 1 && !a.crit && !this.announcedThisMove) {
+      this.numbers.note(GAME_WIDTH / 2, L.comboY, `${rankName(report.bestRank)}!`, TEXT.light, 28);
     }
-    if (a.merges >= 2) {
-      this.floats.show(GAME_WIDTH / 2, L.comboY, `COMBO x${a.merges}   ${a.comboMult.toFixed(2)}x`, { size: 40, color: TEXT.gold, rise: 30, duration: 1000, scaleFrom: 1.4 });
-    }
-    if (a.crit) {
-      this.floats.show(GAME_WIDTH / 2, L.comboY - (a.merges >= 2 ? 50 : 0), 'CRITICAL!', { size: 52, color: TEXT.red, rise: 30, duration: 1000, scaleFrom: 1.8 });
-    }
-    // Merge names give the rank system meaning.
-    const best = a.hits.reduce((m, h) => Math.max(m, h.rank), 0);
-    if (best >= 4 && a.merges === 1 && !a.crit) {
-      this.floats.show(GAME_WIDTH / 2, L.comboY, `${rankName(best)}!`, { size: 32, color: TEXT.light, rise: 24, duration: 900 });
-    }
-    this.enemyCard.setHp(this.combat.enemy.hp, this.combat.enemy.maxHp);
-    this.refreshEnemyStatus();
-    await hitPromise;
   }
 
   private showHeal(amount: number): void {
-    const p = this.hud.hpBarPoint;
-    this.hud.healReaction();
-    if (motion.damageNumbers) this.floats.show(p.x, p.y, `+${amount}`, { size: 36, color: TEXT.green, scaleFrom: 1.3, rise: 26 });
+    this.fx.healed(amount);
     this.hud.setHp(this.combat.player.hp, this.combat.player.stats.maxHp);
   }
 
@@ -298,17 +383,16 @@ export class BattleScene extends Phaser.Scene {
       switch (ev.type) {
         case 'attack': {
           await this.enemyView.attackLunge();
-          this.hud.hitReaction();
-          const p = this.hud.hpBarPoint;
-          if (motion.damageNumbers) this.floats.show(p.x, p.y, `-${ev.damage}`, { size: 40, color: TEXT.red, scaleFrom: 1.4, rise: 26 });
+          this.cameraFx.hitStop(JUICE.hitStop.normal);
+          this.fx.playerHurt(ev.damage);
           this.hud.setHp(this.combat.player.hp, this.combat.player.stats.maxHp);
-          await delay(this, motion.ms(180));
+          await delay(this, effects.ms(140));
           break;
         }
         case 'poisonTick': {
           audio.play('poison', { volume: 0.5 });
           const p = this.hud.hpBarPoint;
-          if (motion.damageNumbers) this.floats.show(p.x + 120, p.y, `-${ev.damage} poison`, { size: 26, color: TEXT.purple, rise: 26 });
+          this.numbers.note(p.x + 120, p.y, `-${ev.damage} poison`, TEXT.purple, 22);
           this.hud.setHp(this.combat.player.hp, this.combat.player.stats.maxHp);
           this.refreshPlayerStatus();
           break;
@@ -322,10 +406,13 @@ export class BattleScene extends Phaser.Scene {
           toast(this, 'Shield faded!', TEXT.blue, L.comboY, 900);
           break;
         case 'rage':
-          this.enemyView.showRage();
+          // Phase change: brief stop, the boss visibly changes, then it hits faster.
+          this.cameraFx.hitStop(JUICE.hitStop.strong);
+          audio.play('bossAlert');
+          await this.enemyView.phaseChange();
           this.enemyCard.showRage();
-          audio.play('alert');
-          this.floats.show(GAME_WIDTH / 2, L.comboY, 'RAGE! Enemy attacks faster', { size: 34, color: TEXT.red, duration: 1400 });
+          motion.shake(this, JUICE.shake.bossAttack, 130);
+          this.fx.shout('ENRAGED!', TEXT.red, 40, 1100);
           this.refreshEnemyStatus();
           break;
       }
@@ -340,24 +427,26 @@ export class BattleScene extends Phaser.Scene {
         const lockAbility = this.enemyDef.abilities?.find((a) => a.type === 'boardLock');
         const ttl = lockAbility && lockAbility.type === 'boardLock' ? lockAbility.ttl : 3;
         const tile = this.board.lockRandomEmptyCell(ttl);
-        audio.play('alert');
-        this.floats.show(GAME_WIDTH / 2, L.comboY, 'BOARD LOCK!', { size: 40, color: TEXT.purple, duration: 1200 });
+        audio.play('magic');
+        this.fx.shout('BOARD LOCK!', TEXT.purple, 38, 1100);
         if (tile) {
           this.boardView.sync(true);
+          const c = this.boardView.cellCenter(tile.row, tile.col);
+          this.particles.burst(c.x, c.y, { count: 8, color: 0xc9a6ff, size: 6, speed: 80 });
           motion.shake(this, 0.003, 100);
         }
-        await delay(this, motion.ms(200));
+        await delay(this, effects.ms(180));
         break;
       }
       case 'poison':
         audio.play('poison');
-        this.floats.show(GAME_WIDTH / 2, L.comboY, 'POISONED!', { size: 40, color: TEXT.purple, duration: 1200 });
+        this.fx.shout('POISONED!', TEXT.purple, 38, 1100);
         this.refreshPlayerStatus();
         break;
       case 'shield':
         audio.play('magic');
         this.enemyView.showShield(true);
-        this.floats.show(GAME_WIDTH / 2, L.comboY, 'ENEMY SHIELD UP', { size: 36, color: TEXT.blue, duration: 1200 });
+        this.fx.shout('ENEMY SHIELD UP', TEXT.blue, 34, 1100);
         this.refreshEnemyStatus();
         break;
       default:
@@ -402,11 +491,12 @@ export class BattleScene extends Phaser.Scene {
     if (res.healed > 0) this.showHeal(res.healed);
     if (res.dealt > 0) {
       const hp = this.enemyView.hitPoint;
-      if (motion.damageNumbers) this.floats.show(hp.x, hp.y, `${res.dealt}`, { size: 44, color: '#ff8a5b', scaleFrom: 1.5 });
-      this.enemyView.hitReaction(false);
+      this.cameraFx.hitStop(JUICE.hitStop.strong);
+      this.numbers.enemyHit(hp.x, hp.y, res.dealt, { color: '#ff8a5b' });
+      void this.enemyView.hitReaction(false);
       this.enemyCard.setHp(this.combat.enemy.hp, this.combat.enemy.maxHp);
     }
-    this.time.delayedCall(motion.ms(220), async () => {
+    this.time.delayedCall(effects.ms(220), async () => {
       this.boardView.sync(true);
       if (this.combat.enemyDefeated) {
         await this.victory();
@@ -421,11 +511,11 @@ export class BattleScene extends Phaser.Scene {
   private async boardBlockedPenalty(): Promise<void> {
     const lost = this.combat.applyBlockedPenalty();
     audio.play('cancel');
-    motion.shake(this, 0.008, 260);
-    this.floats.show(GAME_WIDTH / 2, L.comboY, `BOARD BLOCKED!  -${lost} HP`, { size: 38, color: TEXT.red, duration: 1600, rise: 20 });
+    motion.shake(this, 0.006, 220);
+    this.fx.shout(`BOARD BLOCKED!  -${lost} HP`, TEXT.red, 36, 1500);
     this.hud.hitReaction();
     this.hud.setHp(this.combat.player.hp, this.combat.player.stats.maxHp);
-    await delay(this, motion.ms(500));
+    await delay(this, effects.ms(420));
     const removed = this.board.clearLowRankTiles(BOARD.blockedPenaltyClearMin);
     await this.boardView.animateRemoval(removed);
     toast(this, `Cleared ${removed.length} weak ninjas. Keep fighting!`, TEXT.light, L.comboY, 1400);
@@ -436,11 +526,15 @@ export class BattleScene extends Phaser.Scene {
   private async victory(): Promise<void> {
     this.ended = true;
     this.input2.setEnabled(false);
-    audio.stopMusic();
-    audio.play('victory');
-    this.floats.show(GAME_WIDTH / 2, L.comboY, 'VICTORY!', { size: 64, color: TEXT.gold, duration: 1600, rise: 20, scaleFrom: 2 });
-    await this.enemyView.die();
+    const isBoss = !!this.enemyDef.isBoss;
+    const inRun = !!(this.wave && runSystem.active);
+    // Keep the dungeon music running between waves; only a boss kill or leaving the run stops it.
+    if (isBoss || !inRun) audio.stopMusic();
+    if (!isBoss) audio.play(inRun ? 'waveClear' : 'victory');
 
+    await this.fx.enemyDied(isBoss);
+
+    // ---- rewards (gameplay: committed before any of the reward animations run)
     const before = { level: save.data.player.level, xp: save.data.player.xp };
     const stats = this.combat.player.stats;
     const base = this.combat.baseRewards();
@@ -454,9 +548,30 @@ export class BattleScene extends Phaser.Scene {
     const levelUp = progression.addXp(xp);
     const st = save.data.stats;
     st.battlesWon++;
-    if (this.enemyDef.isBoss) st.bossesDefeated++;
+    if (isBoss) st.bossesDefeated++;
 
-    if (this.wave && runSystem.active) {
+    // ---- reward juice (presentation only)
+    const from = this.enemyView.centerPoint;
+    const rewardShow = Promise.all([
+      this.rewards.gold(from, this.hud.goldPoint, () => this.hud.setGold(save.data.player.gold, true)),
+      this.rewards.xp(from, this.hud.xpPoint, () => this.hud.setXp(save.data.player.level, save.data.player.xp, progression.xpToNext())),
+    ]);
+    if (levelUp) {
+      this.hud.levelUpReaction();
+      this.fx.shout(`LEVEL UP!  Lv ${levelUp.to}`, TEXT.green, 34, 1200);
+    }
+
+    if (inRun) {
+      await Promise.all([
+        rewardShow,
+        showBanner(this, {
+          title: isBoss ? 'BOSS DEFEATED' : 'WAVE CLEARED',
+          color: isBoss ? TEXT.gold : TEXT.green,
+          titleSize: isBoss ? 52 : 46,
+          durationMs: isBoss ? JUICE.banner.clearedMs * 1.6 : JUICE.banner.clearedMs,
+          y: L.bannerY,
+        }),
+      ]);
       await this.finishRunWave(gold, xp, kept);
       return;
     }
@@ -464,7 +579,8 @@ export class BattleScene extends Phaser.Scene {
     const unlocked = progression.completeStage(this.stage.id);
     save.persist();
     const rewards: BattleRewards = { xp, gold, drops: kept, dropsLost: lost, levelUp, unlockedStageId: unlocked, highestRank: this.board.highestRank, before };
-    await delay(this, motion.ms(500));
+    await rewardShow;
+    await delay(this, effects.ms(260));
     goTo(this, SCENES.RESULTS, { outcome: 'victory', stageId: this.stage.id, rewards });
   }
 
@@ -484,7 +600,6 @@ export class BattleScene extends Phaser.Scene {
       for (const s of region.stages) progression.completeStage(s.id);
     }
     save.persist();
-    await delay(this, motion.ms(450));
     if (next === 'complete') {
       const summary: RunSummary = {
         dungeonId: region.id, difficulty: totals.difficulty, wavesCleared: wave.total, totalWaves: wave.total,
@@ -494,9 +609,10 @@ export class BattleScene extends Phaser.Scene {
       };
       goTo(this, SCENES.RESULTS, { outcome: 'runComplete', stageId: this.stage.id, run: summary });
     } else if (next === 'upgrade') {
-      goTo(this, SCENES.RUN_UPGRADE);
+      goTo(this, SCENES.RUN_UPGRADE, undefined, 140);
     } else {
-      goTo(this, SCENES.WAVE_INTRO, { mode: 'wave' });
+      // Straight into the next wave - the banner in the new scene announces it.
+      goTo(this, SCENES.BATTLE, { run: true }, 140);
     }
   }
 
@@ -507,9 +623,10 @@ export class BattleScene extends Phaser.Scene {
     audio.play('defeat');
     save.data.stats.battlesLost++;
     save.persist();
-    this.floats.show(GAME_WIDTH / 2, L.comboY, 'DEFEATED...', { size: 60, color: TEXT.red, duration: 1600, rise: 10, scaleFrom: 1.6 });
-    this.cameras.main.zoomTo(motion.reduced ? 1 : 1.04, 600);
-    await delay(this, motion.ms(1100));
+    this.cameraFx.hitStop(JUICE.hitStop.kill);
+    this.fx.shout('DEFEATED...', TEXT.red, 56, 1500);
+    this.cameras.main.zoomTo(effects.reduced ? 1 : 1.04, 600);
+    await delay(this, effects.ms(1000));
     const run = runSystem.active;
     if (this.wave && run) {
       const summary: RunSummary = {
@@ -578,7 +695,7 @@ export class BattleScene extends Phaser.Scene {
       },
       addGold: (n: number) => {
         progression.addGold(n);
-        this.hud.setGold(save.data.player.gold);
+        this.hud.setGold(save.data.player.gold, true);
         save.persist();
       },
       heal: () => {
@@ -589,10 +706,16 @@ export class BattleScene extends Phaser.Scene {
         if (this.busy || this.ended) return;
         this.busy = true;
         const dealt = this.combat.damageEnemy(n);
-        const hp = this.enemyView.hitPoint;
-        this.floats.show(hp.x, hp.y, `${dealt}`, { size: 44 });
-        this.enemyCard.setHp(this.combat.enemy.hp, this.combat.enemy.maxHp);
-        await this.enemyView.hitReaction(false);
+        await this.fx.attackOccurred({
+          hits: [{ rank: 2, damage: dealt }],
+          critical: false,
+          merges: 1,
+          comboMult: 1,
+          bombDamage: 0,
+          bestRank: 2,
+          killed: this.combat.enemyDefeated,
+          isBoss: !!this.enemyDef.isBoss,
+        }, () => this.enemyCard.setHp(this.combat.enemy.hp, this.combat.enemy.maxHp));
         if (this.combat.enemyDefeated) await this.victory();
         else this.busy = false;
       },
