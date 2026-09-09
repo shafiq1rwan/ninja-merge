@@ -87,7 +87,8 @@ export class PlayerHud extends Phaser.GameObjects.Container {
     motion.flashSprite(this.scene, this.portrait, 0x8fe3c8, 140);
   }
 
+  /** Where player-side floating numbers spawn: over the HP bar, rising within the HUD. */
   get hpBarPoint(): { x: number; y: number } {
-    return { x: this.x + 300, y: this.y - 60 };
+    return { x: this.x + 300, y: this.y - 30 };
   }
 }

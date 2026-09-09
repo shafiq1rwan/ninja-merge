@@ -4,10 +4,9 @@ import { rankName } from '../data/ranks';
 import { audio } from '../systems/AudioSystem';
 import { save } from '../systems/SaveSystem';
 import { drawBackground } from '../ui/Background';
-import { Button } from '../ui/Button';
+import { Card } from '../ui/Card';
 import { drawHeader, fadeIn, goTo } from '../ui/Hud';
 import { confirmModal, Modal } from '../ui/Modal';
-import { Panel } from '../ui/Panel';
 import { Slider } from '../ui/Slider';
 import { toast } from '../ui/Toast';
 import { Toggle } from '../ui/Toggle';
@@ -24,32 +23,47 @@ export class SettingsScene extends Phaser.Scene {
     fadeIn(this);
     drawHeader(this, 'Settings', () => goTo(this, SCENES.VILLAGE));
     const s = save.data.settings;
-    const cx = GAME_WIDTH / 2;
-    const w = 560;
 
-    new Panel(this, cx, 330, GAME_WIDTH - 48, 400, 'ui_panel').setDepth(DEPTH.content);
-    this.add.text(cx, 160, 'Audio', textStyle(30, { color: TEXT.gold })).setOrigin(0.5).setDepth(DEPTH.content + 1);
-    this.add.text(cx - w / 2, 210, 'Music volume', textStyle(24, { color: TEXT.light, align: 'left' })).setOrigin(0, 0.5).setDepth(DEPTH.content + 1);
-    new Slider(this, cx - 40, 256, 380, s.musicVolume, (v) => { audio.setMusicVolume(v); save.persist(); }).setDepth(DEPTH.content + 1);
-    this.add.text(cx - w / 2, 306, 'Sound effects volume', textStyle(24, { color: TEXT.light, align: 'left' })).setOrigin(0, 0.5).setDepth(DEPTH.content + 1);
-    new Slider(this, cx - 40, 352, 380, s.sfxVolume, (v) => { audio.setSfxVolume(v); save.persist(); audio.play('button'); }).setDepth(DEPTH.content + 1);
-    new Toggle(this, cx, 420, w, 'Mute music', s.musicMuted, (v) => { audio.setMusicMuted(v); save.persist(); }).setDepth(DEPTH.content + 1);
-    new Toggle(this, cx, 480, w, 'Mute sound effects', s.sfxMuted, (v) => { audio.setSfxMuted(v); save.persist(); }).setDepth(DEPTH.content + 1);
+    // Audio
+    const audioCard = new Card(this, { top: 124, padding: 22, gap: 10 });
+    audioCard.text('Audio', 26, { color: TEXT.gold });
+    this.sliderRow(audioCard, 'Music volume', s.musicVolume, (v) => { audio.setMusicVolume(v); save.persist(); });
+    this.sliderRow(audioCard, 'Sound effects volume', s.sfxVolume, (v) => { audio.setSfxVolume(v); save.persist(); audio.play('button'); });
+    audioCard.object(new Toggle(this, audioCard.x, 0, audioCard.innerWidth, 'Mute music', s.musicMuted, (v) => { audio.setMusicMuted(v); save.persist(); }), 56);
+    audioCard.object(new Toggle(this, audioCard.x, 0, audioCard.innerWidth, 'Mute sound effects', s.sfxMuted, (v) => { audio.setSfxMuted(v); save.persist(); }), 56);
+    audioCard.finish();
 
-    new Panel(this, cx, 690, GAME_WIDTH - 48, 270, 'ui_panel').setDepth(DEPTH.content);
-    this.add.text(cx, 590, 'Display & Accessibility', textStyle(30, { color: TEXT.gold })).setOrigin(0.5).setDepth(DEPTH.content + 1);
-    new Toggle(this, cx, 650, w, 'Screen shake', s.screenShake, (v) => { s.screenShake = v; save.persist(); }).setDepth(DEPTH.content + 1);
-    new Toggle(this, cx, 710, w, 'Damage numbers', s.damageNumbers, (v) => { s.damageNumbers = v; save.persist(); }).setDepth(DEPTH.content + 1);
-    new Toggle(this, cx, 770, w, 'Reduced motion', s.reducedMotion, (v) => { s.reducedMotion = v; save.persist(); }).setDepth(DEPTH.content + 1);
+    // Display & accessibility
+    const display = new Card(this, { top: audioCard.bottom + 14, padding: 22, gap: 10 });
+    display.text('Display & Accessibility', 26, { color: TEXT.gold });
+    display.object(new Toggle(this, display.x, 0, display.innerWidth, 'Screen shake', s.screenShake, (v) => { s.screenShake = v; save.persist(); }), 56);
+    display.object(new Toggle(this, display.x, 0, display.innerWidth, 'Damage numbers', s.damageNumbers, (v) => { s.damageNumbers = v; save.persist(); }), 56);
+    display.object(new Toggle(this, display.x, 0, display.innerWidth, 'Reduced motion', s.reducedMotion, (v) => { s.reducedMotion = v; save.persist(); }), 56);
+    display.finish();
 
-    this.add.text(cx, 870, 'Save Data', textStyle(30, { color: TEXT.gold })).setOrigin(0.5).setDepth(DEPTH.content + 1);
-    new Button(this, cx - 150, 940, 'Export Save', () => this.exportSave(), { width: 280, height: 80, fontSize: 26 }).setDepth(DEPTH.content + 1);
-    new Button(this, cx + 150, 940, 'Import Save', () => this.importSave(), { width: 280, height: 80, fontSize: 26 }).setDepth(DEPTH.content + 1);
-    new Button(this, cx - 150, 1036, 'Statistics', () => this.showStats(), { width: 280, height: 80, fontSize: 26 }).setDepth(DEPTH.content + 1);
-    new Button(this, cx + 150, 1036, 'Reset Progress', () => this.resetSave(), { width: 280, height: 80, fontSize: 26, color: TEXT.red }).setDepth(DEPTH.content + 1);
+    // Save data
+    const data = new Card(this, { top: display.bottom + 14, padding: 22, gap: 12 });
+    data.text('Save Data', 26, { color: TEXT.gold });
+    data.buttonRow([
+      { label: 'Export Save', onClick: () => this.exportSave(), opts: { fontSize: 24 } },
+      { label: 'Import Save', onClick: () => this.importSave(), opts: { fontSize: 24 } },
+    ], 80);
+    data.buttonRow([
+      { label: 'Statistics', onClick: () => this.showStats(), opts: { fontSize: 24 } },
+      { label: 'Reset Progress', onClick: () => this.resetSave(), opts: { fontSize: 24, variant: 'danger' } },
+    ], 80);
+    data.finish();
 
-    this.add.text(cx, GAME_HEIGHT - 40, `${GAME_TITLE} v${GAME_VERSION}  -  Art & audio: Ninja Adventure Asset Pack by Pixel-Boy (CC0)`, textStyle(15, { color: TEXT.muted, wordWrapWidth: GAME_WIDTH - 80 }))
+    this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 40, `${GAME_TITLE} v${GAME_VERSION}\nArt & audio: Ninja Adventure Asset Pack by Pixel-Boy (CC0)`, textStyle(16, { color: TEXT.muted, wordWrapWidth: GAME_WIDTH - 80 }))
       .setOrigin(0.5).setDepth(DEPTH.content + 1);
+  }
+
+  private sliderRow(card: Card, label: string, value: number, onChange: (v: number) => void): void {
+    card.custom(76, (cx, top, w) => {
+      const text = this.add.text(cx - w / 2, top, label, textStyle(22, { color: TEXT.light, align: 'left' })).setOrigin(0, 0);
+      const slider = new Slider(this, cx - 60, top + 52, w - 150, value, onChange);
+      return [text, slider];
+    });
   }
 
   private async exportSave(): Promise<void> {

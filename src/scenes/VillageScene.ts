@@ -6,7 +6,7 @@ import { audio } from '../systems/AudioSystem';
 import { progression } from '../systems/ProgressionSystem';
 import { save } from '../systems/SaveSystem';
 import { drawBackground } from '../ui/Background';
-import { Button } from '../ui/Button';
+import { Card } from '../ui/Card';
 import { drawHeader, fadeIn, goTo, PlayerStrip } from '../ui/Hud';
 import { DEPTH, TEXT, textStyle } from '../ui/theme';
 
@@ -32,26 +32,18 @@ export class VillageScene extends Phaser.Scene {
       this.add.sprite(GAME_WIDTH / 2, 505, walk, 0).setScale(7).setOrigin(0.5, 1).setDepth(DEPTH.decor + 2).play('hero_walk');
     }
 
-    const cx = GAME_WIDTH / 2;
     const current = getStage(progression.currentStageId());
-    const items: { label: string; scene: string; icon?: string; sub?: string }[] = [
-      { label: 'Continue Adventure', scene: SCENES.WORLD_MAP, icon: 'icon_Kunai', sub: `Next: ${current.name}` },
-      { label: 'Equipment', scene: SCENES.EQUIPMENT, icon: 'icon_Armor' },
-      { label: 'Upgrade Ninja', scene: SCENES.UPGRADE, icon: 'icon_AttackUpgrade' },
-      { label: 'Shop', scene: SCENES.SHOP, icon: 'icon_Money' },
-      { label: 'Settings', scene: SCENES.SETTINGS, icon: 'icon_Repair' },
-    ];
-    let y = 640;
-    for (const it of items) {
-      const btn = new Button(this, cx, y, it.label, () => goTo(this, it.scene), { width: 520, height: 96, icon: it.icon, iconScale: 2.5, fontSize: 32 });
-      btn.setDepth(DEPTH.content);
-      if (it.sub) this.add.text(cx, y + 60, it.sub, textStyle(20, { color: TEXT.muted })).setOrigin(0.5).setDepth(DEPTH.content);
-      y += it.sub ? 132 : 112;
-    }
-
     const sp = save.data.player.skillPoints;
-    if (sp > 0) {
-      this.add.text(cx, GAME_HEIGHT - 40, `You have ${sp} skill point${sp > 1 ? 's' : ''} to spend!`, textStyle(24, { color: TEXT.green })).setOrigin(0.5).setDepth(DEPTH.content);
-    }
+
+    const menu = new Card(this, { top: 560, padding: 24, gap: 12 });
+    menu.button('Continue Adventure', () => goTo(this, SCENES.WORLD_MAP), { variant: 'primary', icon: 'icon_Kunai', iconScale: 2.5, fontSize: 32, height: 96 });
+    menu.text(`Next battle: ${current.name}`, 20, { color: TEXT.muted });
+    menu.button('Equipment', () => goTo(this, SCENES.EQUIPMENT), { icon: 'icon_Armor', iconScale: 2.5, fontSize: 30 });
+    menu.button(sp > 0 ? `Upgrade Ninja  (${sp} skill point${sp > 1 ? 's' : ''}!)` : 'Upgrade Ninja', () => goTo(this, SCENES.UPGRADE), { icon: 'icon_AttackUpgrade', iconScale: 2.5, fontSize: 30, color: sp > 0 ? TEXT.green : undefined });
+    menu.button('Shop', () => goTo(this, SCENES.SHOP), { icon: 'icon_Money', iconScale: 2.5, fontSize: 30 });
+    menu.button('Settings', () => goTo(this, SCENES.SETTINGS), { icon: 'icon_Repair', iconScale: 2.5, fontSize: 30 });
+    menu.finish();
+
+    this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 36, 'Progress saves automatically', textStyle(18, { color: TEXT.muted })).setOrigin(0.5).setDepth(DEPTH.content);
   }
 }

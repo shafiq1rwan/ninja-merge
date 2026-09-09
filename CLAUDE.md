@@ -31,7 +31,7 @@ Logical resolution is 720x1280 portrait, `Scale.FIT` + `CENTER_BOTH`, `pixelArt:
 - `src/data/*` - pure data and constants. **Every tunable number lives in `data/balance.ts`** (spawn odds, damage table, combo/crit, enemy scaling, XP curve, upgrade costs, animation timings). Enemies, bosses, stages, items, ranks are declarative records. `data/assets.ts` is the single texture/audio key registry: keys, paths, frame sizes, decor crop rectangles, fonts. Never hardcode an asset path in a scene.
 - `src/systems/*` - game logic with **no Phaser dependency** except `AudioSystem` and `InputSystem`: `BoardSystem` (grid + move/merge/spawn), `CombatSystem` (damage, enemy counter, boss abilities, rewards), `SaveSystem`, `ProgressionSystem`, `EquipmentSystem`, `Rng` (seeded). These are what the Vitest suite tests; keep them Phaser-free so tests stay runnable in Node.
 - `src/entities/*` - Phaser views: `TileView`, `BoardView`, `EnemyView`, `PlayerHud`.
-- `src/scenes/*` - one class per screen; `src/ui/*` - reusable widgets (`Button`, `Panel`, `Modal`, `HealthBar`, `Slider`, `Toggle`, `Toast`, `FloatingText`, `Background`) plus `theme.ts` and `motion.ts`.
+- `src/scenes/*` - one class per screen; `src/ui/*` - reusable widgets (`Card`, `Button`, `Panel`, `Modal`, `HealthBar`, `Slider`, `Toggle`, `Toast`, `FloatingText`, `Background`) plus `theme.ts` and `motion.ts`.
 - Singletons: `save`, `progression`, `equipment`, `audio` are module-level instances imported directly; scenes never construct them.
 
 ### Board is the source of truth
@@ -47,6 +47,10 @@ Logical resolution is 720x1280 portrait, `Scale.FIT` + `CENTER_BOTH`, `pixelArt:
 ### Save format
 
 `SaveSystem.parse` runs `MIGRATIONS[fromVersion]` in sequence up to `SAVE_VERSION`, then deep-merges over `defaultSave()`. To change the save shape: bump `SAVE_VERSION`, add a migration entry, and extend `defaultSave()`. Autosave points: victory/defeat, purchase, equip/unequip/sell, upgrade, stage unlock.
+
+### Screen layout conventions
+
+Menu-style screens are built from `ui/Card.ts`: a vertical flow layout (`title`, `text`, `button`, `buttonRow`, `object`, `custom`, `divider`) that sizes a flat `Panel` to fit and keeps buttons *inside* the card. Anchor with `top` for stacked cards (chain via `card.bottom + gap`) or `centerY` for dialogs like Results. Panels and buttons are drawn with Graphics (no nine-slice art): `Button` variants are `primary` (gold, the one recommended action), `secondary` (wood) and `danger` (red). Scene headers come from `drawHeader` and the level/stats/gold strip from `PlayerStrip` in `ui/Hud.ts`.
 
 ### Text and fonts
 

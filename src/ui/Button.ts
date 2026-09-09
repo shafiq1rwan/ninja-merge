@@ -1,57 +1,70 @@
 import Phaser from 'phaser';
 import { MIN_TOUCH } from '../config/gameConfig';
 import { audio } from '../systems/AudioSystem';
-import { TEXT, textStyle } from './theme';
+import { COLORS, TEXT, textStyle } from './theme';
+
+export type ButtonVariant = 'primary' | 'secondary' | 'danger';
 
 export interface ButtonOptions {
   width?: number;
   height?: number;
   fontSize?: number;
+  /** Text colour override (defaults per variant). */
   color?: string;
+  variant?: ButtonVariant;
   icon?: string; // texture key drawn left of the label
   iconScale?: number;
   disabled?: boolean;
   /** Skip the click sound (e.g. when the scene plays its own). */
   silent?: boolean;
-  /** Use the "pressed" wood skin permanently (for selected tabs). */
+  /** Render as primary (used for selected tabs). */
   selected?: boolean;
 }
 
+interface Skin { fill: number; border: number; shadow: number; text: string }
+
+const SKINS: Record<ButtonVariant, Skin> = {
+  primary: { fill: COLORS.gold, border: 0x8a5a2b, shadow: 0x8a5a2b, text: TEXT.dark },
+  secondary: { fill: COLORS.woodLight, border: 0x5a3a1e, shadow: 0x3a2412, text: TEXT.light },
+  danger: { fill: 0xa23b32, border: 0x6a1f18, shadow: 0x4a1410, text: TEXT.light },
+};
+
+const DISABLED: Skin = { fill: 0x4a4038, border: 0x2a241e, shadow: 0x2a241e, text: TEXT.muted };
+const RADIUS = 12;
+const SHADOW = 5;
+
+type State = 'normal' | 'hover' | 'pressed';
+
 /**
- * Wooden pixel button with hover/press/disabled states and a comfortably large hit area.
- * Uses a scaled nine-slice of button_normal.png (16x8, 3px borders).
+ * Flat drawn button with a solid drop edge for depth, hover lightening and a press-down animation.
+ * Always at least MIN_TOUCH tall so it is comfortable on phones.
  */
 export class Button extends Phaser.GameObjects.Container {
-  private bg: Phaser.GameObjects.NineSlice | Phaser.GameObjects.Rectangle;
+  private g: Phaser.GameObjects.Graphics;
   private label: Phaser.GameObjects.Text;
   private icon?: Phaser.GameObjects.Image;
   private hit: Phaser.GameObjects.Rectangle;
   private disabled = false;
-  private selectedSkin = false;
+  private variant: ButtonVariant;
+  private visual: State = 'normal';
+  private textColor?: string;
   readonly buttonWidth: number;
   readonly buttonHeight: number;
   private onClick: () => void;
-  private opts: ButtonOptions;
 
   constructor(scene: Phaser.Scene, x: number, y: number, text: string, onClick: () => void, opts: ButtonOptions = {}) {
     super(scene, x, y);
-    this.opts = opts;
     this.onClick = onClick;
+    this.variant = opts.variant ?? (opts.selected ? 'primary' : 'secondary');
+    this.textColor = opts.color;
     const w = (this.buttonWidth = Math.max(opts.width ?? 320, MIN_TOUCH));
     const h = (this.buttonHeight = Math.max(opts.height ?? MIN_TOUCH, MIN_TOUCH));
-    this.selectedSkin = !!opts.selected;
 
-    const factory = scene.add as unknown as { nineslice?: unknown };
-    if (typeof factory.nineslice === 'function' && scene.textures.exists('ui_btn')) {
-      const s = 4;
-      this.bg = scene.add.nineslice(0, 0, this.skinFor('normal'), undefined, Math.round(w / s), Math.round(h / s), 3, 3, 3, 3).setScale(s);
-    } else {
-      this.bg = scene.add.rectangle(0, 0, w, h, 0x8a5a2b).setStrokeStyle(4, 0x2b1d12);
-    }
-    this.add(this.bg);
+    this.g = scene.add.graphics();
+    this.add(this.g);
 
     const fontSize = opts.fontSize ?? 30;
-    this.label = scene.add.text(0, -2, text, textStyle(fontSize, { color: opts.color ?? TEXT.light })).setOrigin(0.5);
+    this.label = scene.add.text(0, 0, text, textStyle(fontSize, { color: this.skin().text, strokeThickness: 0, stroke: false })).setOrigin(0.5);
     if (opts.icon && scene.textures.exists(opts.icon)) {
       this.icon = scene.add.image(0, 0, opts.icon).setScale(opts.iconScale ?? 3);
       const gap = 14;
@@ -62,47 +75,60 @@ export class Button extends Phaser.GameObjects.Container {
     }
     this.add(this.label);
 
-    this.hit = scene.add.rectangle(0, 0, w, h, 0xffffff, 0).setInteractive({ useHandCursor: true });
+    this.hit = scene.add.rectangle(0, 0, w, h + SHADOW, 0xffffff, 0).setInteractive({ useHandCursor: true });
     this.add(this.hit);
 
-    this.hit.on(Phaser.Input.Events.POINTER_OVER, () => this.setSkin('hover'));
-    this.hit.on(Phaser.Input.Events.POINTER_OUT, () => this.setSkin('normal'));
-    this.hit.on(Phaser.Input.Events.POINTER_DOWN, () => {
-      if (this.disabled) return;
-      this.setSkin('pressed');
-      this.label.setY(2);
-    });
+    this.hit.on(Phaser.Input.Events.POINTER_OVER, () => this.setVisual('hover'));
+    this.hit.on(Phaser.Input.Events.POINTER_OUT, () => this.setVisual('normal'));
+    this.hit.on(Phaser.Input.Events.POINTER_DOWN, () => { if (!this.disabled) this.setVisual('pressed'); });
     this.hit.on(Phaser.Input.Events.POINTER_UP, (_p: Phaser.Input.Pointer, _x: number, _y: number, event: Phaser.Types.Input.EventData) => {
       if (this.disabled) return;
       event?.stopPropagation?.();
-      this.setSkin('hover');
-      this.label.setY(-2);
+      this.setVisual('hover');
       if (!opts.silent) audio.play('button');
       this.onClick();
     });
-    this.hit.on(Phaser.Input.Events.POINTER_UP_OUTSIDE, () => {
-      this.setSkin('normal');
-      this.label.setY(-2);
-    });
+    this.hit.on(Phaser.Input.Events.POINTER_UP_OUTSIDE, () => this.setVisual('normal'));
 
     if (opts.disabled) this.setDisabled(true);
+    else this.draw();
     scene.add.existing(this);
   }
 
-  private skinFor(state: 'normal' | 'hover' | 'pressed' | 'disabled'): string {
-    if (this.disabled) return 'ui_btn_disabled';
-    if (this.selectedSkin) return 'ui_btn_pressed';
-    switch (state) {
-      case 'hover': return 'ui_btn_hover';
-      case 'pressed': return 'ui_btn_pressed';
-      case 'disabled': return 'ui_btn_disabled';
-      default: return 'ui_btn';
-    }
+  private skin(): Skin {
+    return this.disabled ? DISABLED : SKINS[this.variant];
   }
 
-  private setSkin(state: 'normal' | 'hover' | 'pressed' | 'disabled'): void {
-    if (this.bg instanceof Phaser.GameObjects.NineSlice) this.bg.setTexture(this.skinFor(state));
-    else this.bg.setFillStyle(this.disabled ? 0x4a3a2a : state === 'pressed' ? 0x6a4520 : state === 'hover' ? 0x9a6a3b : 0x8a5a2b);
+  private setVisual(s: State): void {
+    if (this.visual === s) return;
+    this.visual = s;
+    this.draw();
+  }
+
+  private draw(): void {
+    const w = this.buttonWidth;
+    const h = this.buttonHeight;
+    const skin = this.skin();
+    const pressed = this.visual === 'pressed' && !this.disabled;
+    let fill = skin.fill;
+    if (this.visual === 'hover' && !this.disabled) {
+      const c = Phaser.Display.Color.IntegerToColor(fill).lighten(8);
+      fill = c.color;
+    }
+    const g = this.g;
+    g.clear();
+    const dy = pressed ? SHADOW - 1 : 0;
+    if (!pressed) {
+      g.fillStyle(skin.shadow, 1);
+      g.fillRoundedRect(-w / 2, -h / 2 + SHADOW, w, h, RADIUS);
+    }
+    g.fillStyle(fill, 1);
+    g.fillRoundedRect(-w / 2, -h / 2 + dy, w, h, RADIUS);
+    g.lineStyle(3, skin.border, 1);
+    g.strokeRoundedRect(-w / 2, -h / 2 + dy, w, h, RADIUS);
+    const contentY = dy - 1;
+    this.label.setY(contentY).setColor(this.disabled ? DISABLED.text : this.textColor ?? skin.text);
+    this.icon?.setY(contentY);
   }
 
   setText(text: string): this {
@@ -112,17 +138,23 @@ export class Button extends Phaser.GameObjects.Container {
 
   setDisabled(v: boolean): this {
     this.disabled = v;
-    this.setSkin('normal');
-    this.label.setAlpha(v ? 0.5 : 1);
+    this.label.setAlpha(v ? 0.6 : 1);
     this.icon?.setAlpha(v ? 0.5 : 1);
     if (v) this.hit.disableInteractive();
     else this.hit.setInteractive({ useHandCursor: true });
+    this.draw();
     return this;
   }
 
   setSelected(v: boolean): this {
-    this.selectedSkin = v;
-    this.setSkin('normal');
+    this.variant = v ? 'primary' : 'secondary';
+    this.draw();
+    return this;
+  }
+
+  setVariant(v: ButtonVariant): this {
+    this.variant = v;
+    this.draw();
     return this;
   }
 

@@ -242,7 +242,7 @@ export class BattleScene extends Phaser.Scene {
   private showHeal(amount: number): void {
     const p = this.hud.hpBarPoint;
     this.hud.healReaction();
-    if (motion.damageNumbers) this.floats.show(p.x, p.y, `+${amount}`, { size: 40, color: TEXT.green, scaleFrom: 1.4 });
+    if (motion.damageNumbers) this.floats.show(p.x, p.y, `+${amount}`, { size: 40, color: TEXT.green, scaleFrom: 1.4, rise: 44 });
     this.hud.setHp(this.combat.player.hp, this.combat.player.stats.maxHp);
   }
 
@@ -255,7 +255,7 @@ export class BattleScene extends Phaser.Scene {
           await this.enemyView.attackLunge();
           this.hud.hitReaction();
           const p = this.hud.hpBarPoint;
-          if (motion.damageNumbers) this.floats.show(p.x, p.y, `-${ev.damage}`, { size: 44, color: TEXT.red, scaleFrom: 1.5 });
+          if (motion.damageNumbers) this.floats.show(p.x, p.y, `-${ev.damage}`, { size: 44, color: TEXT.red, scaleFrom: 1.5, rise: 44 });
           this.hud.setHp(this.combat.player.hp, this.combat.player.stats.maxHp);
           await delay(this, motion.ms(180));
           break;
@@ -453,8 +453,8 @@ export class BattleScene extends Phaser.Scene {
             this.openPause();
           },
         },
-        { label: 'Restart Battle', onClick: () => goTo(this, SCENES.BATTLE, { stageId: this.stage.id }), color: TEXT.gold },
-        { label: 'Return to Village', onClick: () => goTo(this, SCENES.VILLAGE), color: TEXT.red },
+        { label: 'Restart Battle', onClick: () => goTo(this, SCENES.BATTLE, { stageId: this.stage.id }) },
+        { label: 'Return to Village', onClick: () => goTo(this, SCENES.VILLAGE), variant: 'danger' },
       ],
     });
   }
@@ -469,10 +469,12 @@ export class BattleScene extends Phaser.Scene {
   private debugApi() {
     return {
       spawnRank: (rank: number) => {
+        if (this.busy || this.ended) return; // never re-sync while tiles are animating
         this.board.spawnNinja(rank);
         this.boardView.sync(true);
       },
       spawnSpecial: (kind: 'potion' | 'bomb' | 'blocked') => {
+        if (this.busy || this.ended) return;
         this.board.spawnSpecial(kind, kind === 'blocked' ? 3 : undefined);
         this.boardView.sync(true);
       },

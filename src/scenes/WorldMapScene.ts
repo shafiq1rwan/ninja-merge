@@ -128,8 +128,9 @@ export class WorldMapScene extends Phaser.Scene {
     const completed = progression.isCompleted(stage.id);
     const wrap = this.add.container(0, 0);
     const label = stage.isBoss ? `${stage.name}` : stage.name;
+    const isNext = unlocked && !completed;
     const btn = new Button(this, x, y, label, () => this.startStage(stage), {
-      width: w, height: h, fontSize: 26, color: stage.isBoss ? TEXT.red : TEXT.light, disabled: !unlocked,
+      width: w, height: h, fontSize: 26, disabled: !unlocked, variant: isNext ? 'primary' : 'secondary',
     });
     wrap.add(btn);
     const status = !unlocked ? 'Locked' : completed ? 'Cleared' : stage.isBoss ? 'BOSS' : `Lv ${stage.level}`;

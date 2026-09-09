@@ -6,17 +6,18 @@ import { audio } from '../systems/AudioSystem';
 import { progression } from '../systems/ProgressionSystem';
 import { save } from '../systems/SaveSystem';
 import { drawBackground } from '../ui/Background';
-import { Button } from '../ui/Button';
+import { Card } from '../ui/Card';
 import { drawHeader, fadeIn, goTo, PlayerStrip } from '../ui/Hud';
 import { motion } from '../ui/motion';
-import { Panel } from '../ui/Panel';
 import { toast } from '../ui/Toast';
 import { DEPTH, TEXT, textStyle } from '../ui/theme';
+
+type UpgradeId = (typeof UPGRADE_DEFS)[number]['id'];
 
 /** Permanent training upgrades bought with gold (or free with skill points). */
 export class UpgradeScene extends Phaser.Scene {
   private strip!: PlayerStrip;
-  private rows: Phaser.GameObjects.GameObject[] = [];
+  private dynamic: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
     super(SCENES.UPGRADE);
@@ -25,49 +26,63 @@ export class UpgradeScene extends Phaser.Scene {
   create(): void {
     drawBackground(this, 'village', { decorY: GAME_HEIGHT + 20, decorCount: 0, particles: 4 });
     fadeIn(this);
-    drawHeader(this, 'Upgrade Ninja', () => goTo(this, SCENES.VILLAGE), 'Permanent training - costs double each level');
+    drawHeader(this, 'Upgrade Ninja', () => goTo(this, SCENES.VILLAGE), 'Permanent training - cost doubles each level');
     this.strip = new PlayerStrip(this, 150);
     this.render();
   }
 
   private render(): void {
-    for (const r of this.rows) r.destroy();
-    this.rows = [];
+    for (const o of this.dynamic) o.destroy(true);
+    this.dynamic = [];
     this.strip.refresh();
-    const cx = GAME_WIDTH / 2;
     const sp = save.data.player.skillPoints;
-    this.rows.push(
-      this.add.text(cx, 222, sp > 0 ? `Skill points available: ${sp}  (free training!)` : 'Level up every 3 levels to earn skill points', textStyle(22, { color: sp > 0 ? TEXT.green : TEXT.muted }))
+    this.dynamic.push(
+      this.add.text(GAME_WIDTH / 2, 214, sp > 0 ? `${sp} skill point${sp > 1 ? 's' : ''} available - spend for free training!` : 'Every 3 player levels grants a skill point for free training', textStyle(20, { color: sp > 0 ? TEXT.green : TEXT.muted }))
         .setOrigin(0.5).setDepth(DEPTH.content),
     );
 
-    UPGRADE_DEFS.forEach((def, i) => {
-      const y = 330 + i * 212;
+    let top = 244;
+    for (const def of UPGRADE_DEFS) {
       const level = progression.upgradeLevel(def.id);
       const cost = progression.upgradeCost(def.id);
       const maxed = level >= UPGRADES.maxLevel;
-      const c = this.add.container(0, 0).setDepth(DEPTH.content);
-      c.add(new Panel(this, cx, y, GAME_WIDTH - 48, 190, 'ui_panel'));
-      if (this.textures.exists(def.icon)) c.add(this.add.image(80, y - 30, def.icon).setScale(3.5));
-      c.add(this.add.text(140, y - 62, def.name, textStyle(30, { color: TEXT.gold, align: 'left' })).setOrigin(0, 0.5));
-      c.add(this.add.text(140, y - 26, `Level ${level} / ${UPGRADES.maxLevel}   -   ${def.perLevel} per level`, textStyle(21, { color: TEXT.light, align: 'left' })).setOrigin(0, 0.5));
-      c.add(this.add.text(140, y + 4, def.description, textStyle(19, { color: TEXT.muted, align: 'left' })).setOrigin(0, 0.5));
-
-      const buy = new Button(this, sp > 0 ? cx - 130 : cx + 70, y + 56, maxed ? 'MAXED' : `Train  ${cost} g`, () => this.buy(def.id, c), {
-        width: sp > 0 ? 300 : 380, height: 76, fontSize: 24, disabled: maxed || !progression.canUpgrade(def.id), icon: maxed ? undefined : 'item_GoldCoin', iconScale: 3,
+      const card = new Card(this, { top, padding: 16, gap: 10 });
+      card.custom(96, (cx, t, w) => {
+        const objs: Phaser.GameObjects.GameObject[] = [];
+        const left = cx - w / 2;
+        if (this.textures.exists(def.icon)) objs.push(this.add.image(left + 44, t + 48, def.icon).setScale(3.2));
+        objs.push(this.add.text(left + 96, t + 4, def.name, textStyle(28, { color: TEXT.gold, align: 'left' })).setOrigin(0, 0));
+        objs.push(this.add.text(left + 96, t + 40, `${def.perLevel} per level  -  ${def.description}`, textStyle(19, { color: TEXT.light, align: 'left', wordWrapWidth: w - 230 })).setOrigin(0, 0));
+        objs.push(this.add.text(cx + w / 2, t + 8, `Lv ${level} / ${UPGRADES.maxLevel}`, textStyle(22, { color: TEXT.muted, align: 'right' })).setOrigin(1, 0));
+        // Level pips
+        const g = this.add.graphics();
+        const pipW = 10;
+        const pips = UPGRADES.maxLevel;
+        const pipGap = 3;
+        const totalW = pips * pipW + (pips - 1) * pipGap;
+        for (let i = 0; i < pips; i++) {
+          g.fillStyle(i < level ? 0xd9a441 : 0x3a2f26, 1);
+          g.fillRect(cx + w / 2 - totalW + i * (pipW + pipGap), t + 40, pipW, 8);
+        }
+        objs.push(g);
+        return objs;
       });
-      c.add(buy);
-      if (sp > 0 && !maxed) {
-        c.add(new Button(this, cx + 190, y + 56, 'Use skill point', () => this.spendSp(def.id, c), { width: 300, height: 76, fontSize: 22, color: TEXT.green }));
-      }
-      this.rows.push(c);
-    });
+      const defs = [{
+        label: maxed ? 'MAXED' : `Train  -  ${cost} gold`,
+        onClick: () => this.buy(def.id),
+        opts: { variant: 'primary' as const, fontSize: 24, disabled: maxed || !progression.canUpgrade(def.id), icon: maxed ? undefined : 'item_GoldCoin', iconScale: 3 },
+      }];
+      if (sp > 0 && !maxed) defs.push({ label: 'Use skill point', onClick: () => this.spendSp(def.id), opts: { variant: 'secondary' as unknown as 'primary', fontSize: 22, disabled: false, icon: undefined, iconScale: 3 } });
+      card.buttonRow(defs, 76);
+      const c = card.finish();
+      this.dynamic.push(c);
+      top = card.bottom + 12;
+    }
   }
 
-  private buy(id: (typeof UPGRADE_DEFS)[number]['id'], card: Phaser.GameObjects.Container): void {
+  private buy(id: UpgradeId): void {
     if (progression.buyUpgrade(id)) {
       audio.play('powerup');
-      this.flash(card);
       toast(this, 'Training complete!', TEXT.green);
       this.render();
     } else {
@@ -76,17 +91,11 @@ export class UpgradeScene extends Phaser.Scene {
     }
   }
 
-  private spendSp(id: (typeof UPGRADE_DEFS)[number]['id'], card: Phaser.GameObjects.Container): void {
+  private spendSp(id: UpgradeId): void {
     if (progression.spendSkillPoint(id)) {
       audio.play('levelup');
-      this.flash(card);
       toast(this, 'Skill point spent!', TEXT.green);
       this.render();
     }
-  }
-
-  private flash(card: Phaser.GameObjects.Container): void {
-    if (motion.reduced) return;
-    this.tweens.add({ targets: card, scaleX: 1.02, scaleY: 1.02, duration: 90, yoyo: true });
   }
 }

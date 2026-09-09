@@ -7,17 +7,16 @@ import { equipment } from '../systems/EquipmentSystem';
 import { save } from '../systems/SaveSystem';
 import type { ItemDef } from '../types';
 import { drawBackground } from '../ui/Background';
-import { Button } from '../ui/Button';
+import { Card } from '../ui/Card';
 import { drawHeader, fadeIn, goTo, PlayerStrip } from '../ui/Hud';
 import { Modal } from '../ui/Modal';
-import { Panel } from '../ui/Panel';
 import { toast } from '../ui/Toast';
 import { DEPTH, hex, TEXT, textStyle } from '../ui/theme';
 
-/** Village shop: fixed catalogue of equipment. */
+/** Village shop: fixed catalogue of equipment laid out as a 2-column grid of cards. */
 export class ShopScene extends Phaser.Scene {
   private strip!: PlayerStrip;
-  private cards: Phaser.GameObjects.GameObject[] = [];
+  private dynamic: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
     super(SCENES.SHOP);
@@ -32,43 +31,51 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private render(): void {
-    for (const c of this.cards) c.destroy();
-    this.cards = [];
+    for (const o of this.dynamic) o.destroy(true);
+    this.dynamic = [];
     this.strip.refresh();
-    const cx = GAME_WIDTH / 2;
-    this.cards.push(this.add.text(cx, 218, `Bag ${equipment.inventory.length} / ${ECONOMY.inventoryMax}   -   Sell items from the Equipment screen`, textStyle(20, { color: TEXT.muted })).setOrigin(0.5).setDepth(DEPTH.content));
+    this.dynamic.push(
+      this.add.text(GAME_WIDTH / 2, 212, `Bag ${equipment.inventory.length} / ${ECONOMY.inventoryMax}   -   sell items from the Equipment screen`, textStyle(19, { color: TEXT.muted }))
+        .setOrigin(0.5).setDepth(DEPTH.content),
+    );
 
     const cols = 2;
-    const w = 330;
-    const h = 236;
-    const gapX = 16;
-    const gapY = 16;
-    const startX = cx - (w + gapX) / 2;
-    const startY = 380;
-    SHOP_CATALOG.forEach((id, i) => {
-      const item = getItem(id);
-      if (!item) return;
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      this.cards.push(this.card(item, startX + col * (w + gapX), startY + row * (h + gapY), w, h));
-    });
+    const gap = 12;
+    const w = (GAME_WIDTH - 48 - gap) / cols;
+    let top = 242;
+    for (let row = 0; row < Math.ceil(SHOP_CATALOG.length / cols); row++) {
+      let rowBottom = top;
+      for (let col = 0; col < cols; col++) {
+        const item = getItem(SHOP_CATALOG[row * cols + col] ?? '');
+        if (!item) continue;
+        const x = 24 + w / 2 + col * (w + gap);
+        const card = this.itemCard(item, x, top, w);
+        rowBottom = Math.max(rowBottom, card.bottom);
+      }
+      top = rowBottom + gap;
+    }
   }
 
-  private card(item: ItemDef, x: number, y: number, w: number, h: number): Phaser.GameObjects.Container {
-    const c = this.add.container(x, y).setDepth(DEPTH.content);
-    c.add(new Panel(this, 0, 0, w, h, 'ui_panel2'));
-    if (this.textures.exists(item.icon)) c.add(this.add.image(-w / 2 + 44, -h / 2 + 50, item.icon).setScale(3));
-    c.add(this.add.text(-w / 2 + 84, -h / 2 + 34, item.name, textStyle(24, { color: hex(RARITY_COLORS[item.rarity]), align: 'left' })).setOrigin(0, 0.5));
-    c.add(this.add.text(-w / 2 + 84, -h / 2 + 64, `${RARITY_LABEL[item.rarity]} ${item.slot}`, textStyle(17, { color: TEXT.muted, align: 'left' })).setOrigin(0, 0.5));
-    c.add(this.add.text(-w / 2 + 22, -h / 2 + 92, describeStats(item).join('\n'), textStyle(18, { color: TEXT.light, align: 'left' })).setOrigin(0, 0));
+  private itemCard(item: ItemDef, x: number, top: number, width: number): Card {
     const owned = equipment.inventory.includes(item.id) || Object.values(equipment.equipped).includes(item.id);
     const canAfford = save.data.player.gold >= item.price;
-    const btn = new Button(this, 0, h / 2 - 46, `${item.price} g`, () => this.confirmBuy(item), {
-      width: w - 40, height: 68, fontSize: 24, icon: 'item_GoldCoin', iconScale: 3, disabled: !canAfford || equipment.isFull, color: canAfford ? TEXT.light : TEXT.red,
+    const card = new Card(this, { x, width, top, padding: 14, gap: 8 });
+    card.custom(54, (cx, t, w) => {
+      const objs: Phaser.GameObjects.GameObject[] = [];
+      const left = cx - w / 2;
+      if (this.textures.exists(item.icon)) objs.push(this.add.image(left + 24, t + 27, item.icon).setScale(2.6));
+      objs.push(this.add.text(left + 56, t + 2, item.name, textStyle(22, { color: hex(RARITY_COLORS[item.rarity]), align: 'left', wordWrapWidth: w - 60 })).setOrigin(0, 0));
+      objs.push(this.add.text(left + 56, t + 32, `${RARITY_LABEL[item.rarity]} ${item.slot}${owned ? '  -  owned' : ''}`, textStyle(16, { color: owned ? TEXT.green : TEXT.muted, align: 'left' })).setOrigin(0, 0));
+      return objs;
     });
-    c.add(btn);
-    if (owned) c.add(this.add.text(w / 2 - 16, -h / 2 + 16, 'owned', textStyle(15, { color: TEXT.green })).setOrigin(1, 0));
-    return c;
+    card.custom(44, (cx, t, w) => [
+      this.add.text(cx - w / 2, t, describeStats(item).join('   '), textStyle(17, { color: TEXT.light, align: 'left', wordWrapWidth: w })).setOrigin(0, 0),
+    ]);
+    card.button(`${item.price} gold`, () => this.confirmBuy(item), {
+      height: 68, fontSize: 24, icon: 'item_GoldCoin', iconScale: 3, variant: canAfford ? 'primary' : 'secondary', disabled: !canAfford || equipment.isFull,
+    });
+    this.dynamic.push(card.finish());
+    return card;
   }
 
   private confirmBuy(item: ItemDef): void {
@@ -78,7 +85,7 @@ export class ShopScene extends Phaser.Scene {
       buttons: [
         {
           label: 'Buy',
-          color: TEXT.gold,
+          variant: 'primary',
           onClick: () => {
             if (equipment.buy(item.id)) {
               audio.play('coin');

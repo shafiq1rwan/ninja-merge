@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../config/gameConfig';
-import { Button } from './Button';
+import { Button, type ButtonVariant } from './Button';
 import { Panel } from './Panel';
 import { DEPTH, heading, TEXT, textStyle, titleStyle } from './theme';
 
@@ -8,6 +8,7 @@ export interface ModalButton {
   label: string;
   onClick?: () => void;
   color?: string;
+  variant?: ButtonVariant;
   /** Keep the modal open after clicking. */
   keepOpen?: boolean;
 }
@@ -73,14 +74,15 @@ export class Modal extends Phaser.GameObjects.Container {
       y += extraH;
     }
     y += 12;
-    for (const b of opts.buttons) {
+    opts.buttons.forEach((b, i) => {
+      const variant: ButtonVariant = b.variant ?? (b.color === TEXT.red ? 'danger' : i === 0 && opts.buttons.length > 1 ? 'primary' : 'secondary');
       const btn = new Button(scene, cx, y + buttonH / 2, b.label, () => {
         b.onClick?.();
         if (!b.keepOpen) this.close();
-      }, { width: width - 100, height: buttonH, color: b.color });
+      }, { width: width - 80, height: buttonH, variant });
       this.add(btn);
       y += buttonH + gap;
-    }
+    });
 
     scene.add.existing(this);
     // Pop-in
@@ -99,7 +101,7 @@ export function confirmModal(scene: Phaser.Scene, title: string, message: string
     title,
     message,
     buttons: [
-      { label: yesLabel, onClick: onYes, color: TEXT.gold },
+      { label: yesLabel, onClick: onYes, variant: 'primary' },
       { label: noLabel },
     ],
   });

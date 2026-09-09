@@ -5,10 +5,11 @@ import { RANKS } from '../data/ranks';
 import { audio } from '../systems/AudioSystem';
 import { save } from '../systems/SaveSystem';
 import { drawBackground } from '../ui/Background';
+import { Button } from '../ui/Button';
+import { Card } from '../ui/Card';
 import { fadeIn, goTo } from '../ui/Hud';
 import { motion } from '../ui/motion';
-import { Panel } from '../ui/Panel';
-import { DEPTH, heading, TEXT, textStyle, titleStyle } from '../ui/theme';
+import { DEPTH, TEXT, textStyle } from '../ui/theme';
 
 /**
  * Title screen. The first tap doubles as the user gesture that unlocks audio on mobile browsers.
@@ -19,14 +20,17 @@ export class TitleScene extends Phaser.Scene {
   }
 
   create(): void {
-    drawBackground(this, 'title', { decorY: GAME_HEIGHT - 260, decorCount: 5, particles: 10 });
+    drawBackground(this, 'title', { decorY: GAME_HEIGHT - 250, decorCount: 5, particles: 10 });
     fadeIn(this);
-
     const cx = GAME_WIDTH / 2;
-    new Panel(this, cx, 330, 640, 300, 'ui_panel').setDepth(DEPTH.content);
-    this.add.text(cx, 260, 'NINJA', titleStyle(96, { color: TEXT.red, strokeThickness: 10 })).setOrigin(0.5).setDepth(DEPTH.content + 1);
-    this.add.text(cx, 350, heading('MERGE RPG'), titleStyle(64, { color: TEXT.gold, strokeThickness: 8 })).setOrigin(0.5).setDepth(DEPTH.content + 1);
-    this.add.text(cx, 420, 'Swipe. Merge. Strike.', textStyle(26, { color: TEXT.muted })).setOrigin(0.5).setDepth(DEPTH.content + 1);
+
+    // Logo card
+    const logo = new Card(this, { width: 620, centerY: 330, padding: 36, gap: 6 });
+    logo.title('NINJA', 96, TEXT.red);
+    logo.title('MERGE RPG', 58, TEXT.gold);
+    logo.spacer(6);
+    logo.text('Swipe. Merge. Strike.', 26, { color: TEXT.muted });
+    logo.finish();
 
     // Parade of ninja forms
     const faces = RANKS.slice(1);
@@ -42,14 +46,6 @@ export class TitleScene extends Phaser.Scene {
     });
 
     const hasSave = save.data.completedStages.length > 0 || save.data.player.gold > 0 || save.data.player.level > 1;
-    const prompt = this.add.text(cx, 720, hasSave ? 'Tap to Continue' : 'Tap to Start', textStyle(40, { color: TEXT.light })).setOrigin(0.5).setDepth(DEPTH.content);
-    if (!motion.reduced) this.tweens.add({ targets: prompt, alpha: 0.35, duration: 700, yoyo: true, repeat: -1 });
-    if (hasSave) {
-      this.add.text(cx, 780, `Level ${save.data.player.level} ninja  -  ${save.data.player.gold} gold`, textStyle(24, { color: TEXT.muted })).setOrigin(0.5).setDepth(DEPTH.content);
-    }
-    this.add.text(cx, GAME_HEIGHT - 60, `${GAME_TITLE} v${GAME_VERSION}\nArt & music: Ninja Adventure Asset Pack by Pixel-Boy (CC0)`, textStyle(18, { color: TEXT.muted }))
-      .setOrigin(0.5).setDepth(DEPTH.content);
-
     let started = false;
     const start = () => {
       if (started) return;
@@ -58,8 +54,21 @@ export class TitleScene extends Phaser.Scene {
       audio.playMusic('music_village');
       goTo(this, SCENES.VILLAGE);
     };
-    this.input.once(Phaser.Input.Events.POINTER_DOWN, start);
+
+    const btn = new Button(this, cx, 700, hasSave ? 'Continue' : 'Start Adventure', start, { width: 460, height: 104, fontSize: 36, variant: 'primary', silent: true });
+    btn.setDepth(DEPTH.content);
+    if (!motion.reduced) this.tweens.add({ targets: btn, scale: 1.03, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    if (hasSave) {
+      this.add.text(cx, 780, `Level ${save.data.player.level} ninja  -  ${save.data.player.gold} gold`, textStyle(24, { color: TEXT.muted })).setOrigin(0.5).setDepth(DEPTH.content);
+    } else {
+      this.add.text(cx, 780, 'Tap anywhere to begin', textStyle(22, { color: TEXT.muted })).setOrigin(0.5).setDepth(DEPTH.content);
+    }
+    this.add.text(cx, GAME_HEIGHT - 52, `${GAME_TITLE} v${GAME_VERSION}\nArt & music: Ninja Adventure Asset Pack by Pixel-Boy (CC0)`, textStyle(18, { color: TEXT.muted }))
+      .setOrigin(0.5).setDepth(DEPTH.content);
+
+    // Tapping anywhere also works (and is the audio-unlock gesture).
+    this.input.once(Phaser.Input.Events.POINTER_UP, start);
     this.input.keyboard?.once('keydown', start);
-    audio.playMusic('music_title'); // will queue until unlocked on mobile
+    audio.playMusic('music_title'); // queued until audio is unlocked on mobile
   }
 }
