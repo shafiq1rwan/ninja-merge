@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_TITLE, GAME_WIDTH, SCENES } from '../config/gameConfig';
 import { assetUrl, AUDIO, DECOR_FRAMES, IMAGES, SPRITESHEETS } from '../data/assets';
+import { BATTLE_FRAMES } from '../data/battleAssets';
 import { COLORS, heading, TEXT, textStyle, titleStyle } from '../ui/theme';
 
 /**
@@ -45,7 +46,7 @@ export class PreloadScene extends Phaser.Scene {
 
   /** Cut named sub-rectangles out of the tilesets so scenes can place trees/houses by name. */
   private registerDecorFrames(): void {
-    for (const d of DECOR_FRAMES) {
+    for (const d of [...DECOR_FRAMES, ...BATTLE_FRAMES]) {
       if (!this.textures.exists(d.texture)) continue;
       const tex = this.textures.get(d.texture);
       if (!tex.has(d.name)) tex.add(d.name, 0, d.x, d.y, d.w, d.h);

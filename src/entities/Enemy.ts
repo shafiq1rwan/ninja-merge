@@ -1,39 +1,39 @@
 import Phaser from 'phaser';
 import { ANIM } from '../data/balance';
+import { BATTLE_LAYOUT } from '../data/battleAssets';
 import { audio } from '../systems/AudioSystem';
 import type { EnemyState } from '../systems/CombatSystem';
 import type { EnemyDef } from '../types';
 import { delay, tweenAsync } from '../ui/async';
 import { HealthBar } from '../ui/HealthBar';
 import { motion } from '../ui/motion';
-import { flatPanel } from '../ui/Panel';
+import { Panel } from '../ui/Panel';
 import { COLORS, DEPTH, TEXT, textStyle } from '../ui/theme';
 
 /**
- * Enemy presentation: sprite + name + HP bar + attack countdown + status badges.
- * Animations return promises so the battle scene can sequence them.
+ * The enemy actor: sprite standing on the ground line with a ground shadow.
+ * Purely presentational; animations return promises so the battle scene can sequence them.
+ * Its stats/HP live in EnemyStatusCard so the environment stays free of HUD text.
  */
 export class EnemyView extends Phaser.GameObjects.Container {
   readonly def: EnemyDef;
   readonly sprite: Phaser.GameObjects.Sprite;
-  private hpBar: HealthBar;
-  private nameText: Phaser.GameObjects.Text;
-  private counterText: Phaser.GameObjects.Text;
-  private statusText: Phaser.GameObjects.Text;
+  readonly renderScale: number;
   private shieldFx?: Phaser.GameObjects.Sprite;
   private idleKey: string;
   private hitKey?: string;
-  private baseY: number;
-  private spriteHomeX: number;
-  private spriteHomeY: number;
 
-  constructor(scene: Phaser.Scene, x: number, y: number, def: EnemyDef, state: EnemyState) {
-    super(scene, x, y);
+  /** @param x centre x, @param feetY the ground line the enemy stands on */
+  constructor(scene: Phaser.Scene, x: number, feetY: number, def: EnemyDef) {
+    super(scene, x, feetY);
     this.def = def;
-    this.baseY = y;
     this.setDepth(DEPTH.content);
 
-    // Idle animation
+    const texture = scene.textures.exists(def.sprite) ? def.sprite : 'ui_emote1';
+    const frameH = scene.textures.get(texture).get(0).height;
+    // Integer scale, clamped so the sprite always fits between the title bar and the ground.
+    this.renderScale = Math.max(1, Math.min(def.scale, Math.floor(BATTLE_LAYOUT.enemyMaxHeight / frameH)));
+
     this.idleKey = `${def.sprite}_idle`;
     if (!scene.anims.exists(this.idleKey) && scene.textures.exists(def.sprite)) {
       const total = scene.textures.get(def.sprite).frameTotal - 1;
@@ -47,61 +47,41 @@ export class EnemyView extends Phaser.GameObjects.Container {
       }
     }
 
-    // Shadow + sprite
-    const shadowW = def.isBoss ? 220 : 110;
-    this.add(scene.add.ellipse(0, 90, shadowW, 28, 0x000000, 0.35));
-    this.spriteHomeX = 0;
-    this.spriteHomeY = def.isBoss ? -10 : 20;
-    const texture = scene.textures.exists(def.sprite) ? def.sprite : 'ui_emote1';
-    this.sprite = scene.add.sprite(this.spriteHomeX, this.spriteHomeY, texture, 0).setScale(def.scale);
+    const w = scene.textures.get(texture).get(0).width * this.renderScale;
+    this.add(scene.add.ellipse(0, 4, Math.round(w * 0.8), 18, 0x000000, 0.4));
+    this.sprite = scene.add.sprite(0, 0, texture, 0).setOrigin(0.5, 1).setScale(this.renderScale);
     if (scene.anims.exists(this.idleKey)) this.sprite.play(this.idleKey);
     this.add(this.sprite);
-
-    // Name + level
-    const title = def.isBoss ? `BOSS  ${def.name}` : def.name;
-    this.nameText = scene.add.text(0, -150, `${title}   Lv ${state.level}`, textStyle(30, { color: def.isBoss ? TEXT.red : TEXT.light })).setOrigin(0.5);
-    this.add(this.nameText);
-
-    // HP bar
-    this.hpBar = new HealthBar(scene, 0, 150, { width: 520, height: 38, fillColor: COLORS.red, lowColor: 0xff8a5b, label: 'HP' });
-    this.hpBar.reset(state.hp, state.maxHp);
-    this.add(this.hpBar);
-
-    // Attack countdown + status
-    this.add(flatPanel(scene, 0, 205, 420, 44, 0x1a1008, 0.7, 10));
-    this.counterText = scene.add.text(0, 205, '', textStyle(26, { color: TEXT.light })).setOrigin(0.5);
-    this.add(this.counterText);
-    this.statusText = scene.add.text(0, 245, '', textStyle(22, { color: TEXT.blue })).setOrigin(0.5);
-    this.add(this.statusText);
-    this.setCounter(state.counter);
-
     scene.add.existing(this);
+    this.idleBob();
+  }
 
+  get spriteHeight(): number {
+    return this.sprite.displayHeight;
+  }
+
+  /** World point on the enemy's upper body where damage numbers spawn (they rise over the sprite, never into the title bar). */
+  get hitPoint(): { x: number; y: number } {
+    return { x: this.x, y: this.y - this.spriteHeight * 0.6 };
+  }
+
+  /** World point at the sprite's centre (for effects). */
+  get centerPoint(): { x: number; y: number } {
+    return { x: this.x, y: this.y - this.spriteHeight / 2 };
+  }
+
+  private idleBob(): void {
+    if (!this.sprite.active) return;
+    this.sprite.setPosition(0, 0);
     if (!motion.reduced) {
-      scene.tweens.add({ targets: this.sprite, y: this.spriteHomeY - 6, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+      this.scene.tweens.add({ targets: this.sprite, y: -5, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     }
-  }
-
-  setHp(hp: number, max: number): void {
-    this.hpBar.set(hp, max);
-  }
-
-  setCounter(n: number): void {
-    if (n <= 1) {
-      this.counterText.setText('Enemy attacks NEXT move!').setColor(TEXT.red);
-    } else {
-      this.counterText.setText(`Enemy attack in: ${n}`).setColor(TEXT.light);
-    }
-  }
-
-  setStatus(parts: string[]): void {
-    this.statusText.setText(parts.join('   '));
   }
 
   /** Flash + recoil. Bosses swap to their hit sheet briefly. */
   async hitReaction(crit: boolean): Promise<void> {
     this.scene.tweens.killTweensOf(this.sprite);
-    this.sprite.setPosition(this.spriteHomeX, this.spriteHomeY);
+    this.sprite.setPosition(0, 0);
     audio.play(crit ? 'crit' : 'enemyHit', { volume: crit ? 1 : 0.8 });
     motion.flashSprite(this.scene, this.sprite, crit ? 0xffd97a : 0xffffff, crit ? 140 : 90);
     if (crit) motion.shake(this.scene, 0.006, 160);
@@ -111,14 +91,8 @@ export class EnemyView extends Phaser.GameObjects.Container {
         if (this.sprite.active && this.scene.anims.exists(this.idleKey)) this.sprite.play(this.idleKey);
       });
     }
-    await tweenAsync(this.scene, {
-      targets: this.sprite,
-      x: this.spriteHomeX + (motion.reduced ? 6 : 14),
-      duration: 40,
-      yoyo: true,
-      repeat: crit ? 3 : 1,
-      onComplete: () => this.idleBob(),
-    });
+    await tweenAsync(this.scene, { targets: this.sprite, x: motion.reduced ? 6 : 14, duration: 40, yoyo: true, repeat: crit ? 3 : 1 });
+    this.idleBob();
   }
 
   /** Slash effect drawn over the enemy. */
@@ -126,8 +100,9 @@ export class EnemyView extends Phaser.GameObjects.Container {
     const key = crit ? 'fx_slash_curved' : 'fx_slash';
     const tex = crit ? 'fx_SlashCurved' : 'fx_CutX';
     if (!this.scene.anims.exists(key)) return;
-    const fx = this.scene.add.sprite(this.x + Phaser.Math.Between(-30, 30), this.y + this.spriteHomeY + Phaser.Math.Between(-20, 20), tex)
-      .setScale(crit ? 7 : 5)
+    const c = this.centerPoint;
+    const fx = this.scene.add.sprite(c.x + Phaser.Math.Between(-24, 24), c.y + Phaser.Math.Between(-16, 16), tex)
+      .setScale(crit ? 6 : 4)
       .setDepth(DEPTH.fx)
       .setAngle(Phaser.Math.Between(-30, 30))
       .play(key);
@@ -138,19 +113,21 @@ export class EnemyView extends Phaser.GameObjects.Container {
   /** Lunge toward the player (down the screen) and back. Resolves at the moment of impact. */
   async attackLunge(): Promise<void> {
     this.scene.tweens.killTweensOf(this.sprite);
-    this.sprite.setPosition(this.spriteHomeX, this.spriteHomeY);
+    this.sprite.setPosition(0, 0);
+    const s = this.renderScale;
     const ms = motion.ms(ANIM.enemyAttackMs);
-    await tweenAsync(this.scene, { targets: this.sprite, y: this.spriteHomeY - 26, scaleX: this.def.scale * 1.06, scaleY: this.def.scale * 0.94, duration: ms * 0.35, ease: 'Quad.easeOut' });
+    await tweenAsync(this.scene, { targets: this.sprite, y: -22, scaleX: s * 1.06, scaleY: s * 0.94, duration: ms * 0.35, ease: 'Quad.easeOut' });
     audio.play('attack');
-    tweenAsync(this.scene, { targets: this.sprite, y: this.spriteHomeY + 70, scaleX: this.def.scale, scaleY: this.def.scale, duration: ms * 0.2, ease: 'Quad.easeIn' })
-      .then(() => tweenAsync(this.scene, { targets: this.sprite, y: this.spriteHomeY, duration: ms * 0.45, ease: 'Quad.easeOut' }))
+    tweenAsync(this.scene, { targets: this.sprite, y: 40, scaleX: s, scaleY: s, duration: ms * 0.2, ease: 'Quad.easeIn' })
+      .then(() => tweenAsync(this.scene, { targets: this.sprite, y: 0, duration: ms * 0.45, ease: 'Quad.easeOut' }))
       .then(() => this.idleBob());
     await delay(this.scene, ms * 0.2);
   }
 
   showShield(on: boolean): void {
     if (on && !this.shieldFx && this.scene.anims.exists('fx_shield')) {
-      this.shieldFx = this.scene.add.sprite(0, this.spriteHomeY, 'fx_Shield').setScale(this.def.isBoss ? 11 : 7).setAlpha(0.8).play('fx_shield');
+      const size = Math.ceil(this.spriteHeight / 26) + 1;
+      this.shieldFx = this.scene.add.sprite(0, -this.spriteHeight / 2, 'fx_Shield').setScale(size).setAlpha(0.75).play('fx_shield');
       this.add(this.shieldFx);
     } else if (!on && this.shieldFx) {
       this.shieldFx.destroy();
@@ -160,7 +137,6 @@ export class EnemyView extends Phaser.GameObjects.Container {
 
   showRage(): void {
     this.sprite.setTint(0xff9a8a);
-    this.nameText.setColor(TEXT.red);
   }
 
   /** Death: fade + shrink with smoke. */
@@ -168,21 +144,72 @@ export class EnemyView extends Phaser.GameObjects.Container {
     this.scene.tweens.killTweensOf(this.sprite);
     this.showShield(false);
     if (this.scene.anims.exists('fx_smoke')) {
-      const fx = this.scene.add.sprite(this.x, this.y + this.spriteHomeY, 'fx_Smoke').setScale(this.def.isBoss ? 10 : 6).setDepth(DEPTH.fx).play('fx_smoke');
+      const c = this.centerPoint;
+      const fx = this.scene.add.sprite(c.x, c.y, 'fx_Smoke').setScale(Math.ceil(this.spriteHeight / 32) + 2).setDepth(DEPTH.fx).play('fx_smoke');
       fx.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => fx.destroy());
     }
-    await tweenAsync(this.scene, { targets: this.sprite, alpha: 0, scale: this.def.scale * 0.4, angle: motion.reduced ? 0 : 20, duration: motion.ms(520), ease: 'Quad.easeIn' });
+    await tweenAsync(this.scene, { targets: this.sprite, alpha: 0, scale: this.renderScale * 0.4, angle: motion.reduced ? 0 : 20, duration: motion.ms(520), ease: 'Quad.easeIn' });
+  }
+}
+
+/**
+ * Combat status card under the enemy scene: portrait, name + level, HP bar, attack countdown, statuses.
+ * Sits in its own panel so no HUD text floats over the environment.
+ */
+export class EnemyStatusCard extends Phaser.GameObjects.Container {
+  private hpBar: HealthBar;
+  private counterText: Phaser.GameObjects.Text;
+  private statusText: Phaser.GameObjects.Text;
+  private nameText: Phaser.GameObjects.Text;
+
+  constructor(scene: Phaser.Scene, top: number, height: number, def: EnemyDef, state: EnemyState) {
+    super(scene, 0, 0);
+    this.setDepth(DEPTH.hud);
+    const width = 720 - 48;
+    const cx = 360;
+    const cy = top + height / 2;
+    const left = cx - width / 2 + 16;
+    const right = cx + width / 2 - 16;
+    this.add(new Panel(scene, cx, cy, width, height, def.isBoss ? 'ui_panel3' : 'ui_panel'));
+
+    // Portrait
+    const faceKey = def.isBoss ? def.sprite.replace(/_(idle|walk)$/, '_face') : `${def.sprite}_face`;
+    const faceSize = 76;
+    this.add(scene.add.rectangle(left + faceSize / 2, cy, faceSize + 6, faceSize + 6, COLORS.ink, 0.8).setStrokeStyle(3, def.isBoss ? COLORS.gold : COLORS.woodLight));
+    if (scene.textures.exists(faceKey)) this.add(scene.add.image(left + faceSize / 2, cy, faceKey).setScale(2));
+
+    const textX = left + faceSize + 18;
+    const label = def.isBoss ? `BOSS  ${def.name}` : def.name;
+    this.nameText = scene.add.text(textX, top + 14, label, textStyle(24, { color: def.isBoss ? TEXT.red : TEXT.light, align: 'left' })).setOrigin(0, 0);
+    this.add(this.nameText);
+    this.add(scene.add.text(right, top + 16, `Lv ${state.level}`, textStyle(20, { color: TEXT.muted, align: 'right' })).setOrigin(1, 0));
+
+    const barW = right - textX;
+    this.hpBar = new HealthBar(scene, textX + barW / 2, top + 58, { width: barW, height: 30, fillColor: COLORS.red, lowColor: 0xff8a5b, label: 'HP', fontSize: 18 });
+    this.hpBar.reset(state.hp, state.maxHp);
+    this.add(this.hpBar);
+
+    this.counterText = scene.add.text(textX, top + height - 14, '', textStyle(20, { color: TEXT.light, align: 'left' })).setOrigin(0, 1);
+    this.statusText = scene.add.text(right, top + height - 14, '', textStyle(18, { color: TEXT.blue, align: 'right' })).setOrigin(1, 1);
+    this.add([this.counterText, this.statusText]);
+    this.setCounter(state.counter);
+    scene.add.existing(this);
   }
 
-  private idleBob(): void {
-    if (!this.sprite.active) return;
-    this.sprite.setPosition(this.spriteHomeX, this.spriteHomeY);
-    if (!motion.reduced) {
-      this.scene.tweens.add({ targets: this.sprite, y: this.spriteHomeY - 6, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-    }
+  setHp(hp: number, max: number): void {
+    this.hpBar.set(hp, max);
   }
 
-  get hitPoint(): { x: number; y: number } {
-    return { x: this.x, y: this.y + this.spriteHomeY - 40 };
+  setCounter(n: number): void {
+    if (n <= 1) this.counterText.setText('Enemy attacks NEXT move!').setColor(TEXT.red);
+    else this.counterText.setText(`Enemy attack in: ${n}`).setColor(TEXT.light);
+  }
+
+  setStatus(parts: string[]): void {
+    this.statusText.setText(parts.join('  '));
+  }
+
+  showRage(): void {
+    this.nameText.setColor(TEXT.red);
   }
 }

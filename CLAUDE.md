@@ -48,6 +48,10 @@ Logical resolution is 720x1280 portrait, `Scale.FIT` + `CENTER_BOTH`, `pixelArt:
 
 `SaveSystem.parse` runs `MIGRATIONS[fromVersion]` in sequence up to `SAVE_VERSION`, then deep-merges over `defaultSave()`. To change the save shape: bump `SAVE_VERSION`, add a migration entry, and extend `defaultSave()`. Autosave points: victory/defeat, purchase, equip/unequip/sell, upgrade, stage unlock.
 
+### Battle stage composition
+
+The battle backdrop is `entities/BattleBackdrop.ts` driven entirely by `data/battleAssets.ts`: `BATTLE_FRAMES` (named, pixel-verified crops out of the tilesets - never show a whole sheet or guess a crop), `ENVIRONMENTS` (one coherent environment per region theme: sky or wall, far silhouettes, 2-6 midground props, ground tiles, base colour) and `BATTLE_LAYOUT` (ground line, enemy feet, status card, board and HUD rectangles). Layer order is fixed: background, ground, enemy, status card, board, HUD; props only ever stand on the ground line at the sides, never behind the enemy or inside the UI area. `EnemyView` is the sprite only (integer scale clamped by `enemyMaxHeight`); its name/HP/counter live in `EnemyStatusCard`, and everything player-side sits inside `PlayerHud`'s panel. To add scenery, add a verified crop to `BATTLE_FRAMES` and a placement to the theme - do not add decoration that competes with the board.
+
 ### Screen layout conventions
 
 Menu-style screens are built from `ui/Card.ts`: a vertical flow layout (`title`, `text`, `button`, `buttonRow`, `object`, `custom`, `divider`) that sizes a flat `Panel` to fit and keeps buttons *inside* the card. Anchor with `top` for stacked cards (chain via `card.bottom + gap`) or `centerY` for dialogs like Results. Panels and buttons are drawn with Graphics (no nine-slice art): `Button` variants are `primary` (gold, the one recommended action), `secondary` (wood) and `danger` (red). Scene headers come from `drawHeader` and the level/stats/gold strip from `PlayerStrip` in `ui/Hud.ts`.

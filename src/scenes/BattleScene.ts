@@ -6,8 +6,10 @@ import { ENEMIES } from '../data/enemies';
 import { rankName } from '../data/ranks';
 import { getRegion, getStage } from '../data/stages';
 import { installDebugKeys } from '../debug/DebugKeys';
+import { BATTLE_LAYOUT } from '../data/battleAssets';
+import { BattleBackdrop } from '../entities/BattleBackdrop';
 import { BoardView } from '../entities/BoardView';
-import { EnemyView } from '../entities/Enemy';
+import { EnemyStatusCard, EnemyView } from '../entities/Enemy';
 import { PlayerHud } from '../entities/Player';
 import { audio } from '../systems/AudioSystem';
 import { BoardSystem } from '../systems/BoardSystem';
@@ -18,8 +20,6 @@ import { progression } from '../systems/ProgressionSystem';
 import { save } from '../systems/SaveSystem';
 import type { ActivationEvent, Direction, EnemyDef, StageDef } from '../types';
 import { delay } from '../ui/async';
-import { drawBackground } from '../ui/Background';
-import { Button } from '../ui/Button';
 import { FloatingText } from '../ui/FloatingText';
 import { fadeIn, goTo } from '../ui/Hud';
 import { Modal } from '../ui/Modal';
@@ -43,14 +43,12 @@ export interface BattleRewards {
   before: { level: number; xp: number };
 }
 
-/** Layout constants (logical 720x1280 portrait). */
+/** Layout constants (logical 720x1280 portrait) - see data/battleAssets.ts. */
 const L = {
-  stageTitleY: 34,
-  enemyY: 250,
-  boardX: 50,
-  boardY: 500,
-  hudY: 1195,
-  comboY: 470,
+  stageTitleY: BATTLE_LAYOUT.titleBarY,
+  boardX: BATTLE_LAYOUT.board.x,
+  boardY: BATTLE_LAYOUT.board.y,
+  comboY: BATTLE_LAYOUT.comboY,
 };
 
 /**
@@ -63,6 +61,7 @@ export class BattleScene extends Phaser.Scene {
   private boardView!: BoardView;
   private combat!: CombatSystem;
   private enemyView!: EnemyView;
+  private enemyCard!: EnemyStatusCard;
   private hud!: PlayerHud;
   private floats!: FloatingText;
   private input2!: InputSystem;
@@ -85,7 +84,7 @@ export class BattleScene extends Phaser.Scene {
 
   create(): void {
     const region = getRegion(this.stage.regionId);
-    drawBackground(this, region.theme, { decorY: 372, decorCount: 4, particles: 5, edgesOnly: true, decorScale: 3 });
+    new BattleBackdrop(this, region.theme);
     fadeIn(this);
     audio.playMusic(this.enemyDef.music ?? region.music);
 
@@ -97,30 +96,31 @@ export class BattleScene extends Phaser.Scene {
     if (curse) this.board.spawnModifiers = curse;
     this.board.start(2);
 
-    // Top: stage + enemy
-    flatPanel(this, GAME_WIDTH / 2, L.stageTitleY, 520, 52, 0x1a1008, 0.6, 12).setDepth(DEPTH.hud);
-    this.stageText = this.add.text(GAME_WIDTH / 2, L.stageTitleY, `${region.name}  -  ${this.stage.name}`, textStyle(26, { color: TEXT.gold })).setOrigin(0.5).setDepth(DEPTH.hud + 1);
-    this.enemyView = new EnemyView(this, GAME_WIDTH / 2, L.enemyY, this.enemyDef, this.combat.enemy);
+    // Top: stage title, enemy on the ground line, status card beneath the scene
+    flatPanel(this, GAME_WIDTH / 2, L.stageTitleY, 520, 48, 0x1a1008, 0.6, 12).setDepth(DEPTH.hud);
+    this.stageText = this.add.text(GAME_WIDTH / 2, L.stageTitleY, `${region.name}  -  ${this.stage.name}`, textStyle(24, { color: TEXT.gold })).setOrigin(0.5).setDepth(DEPTH.hud + 1);
+    this.enemyView = new EnemyView(this, BATTLE_LAYOUT.enemyX, BATTLE_LAYOUT.enemyFeetY, this.enemyDef);
+    this.enemyCard = new EnemyStatusCard(this, BATTLE_LAYOUT.status.top, BATTLE_LAYOUT.status.height, this.enemyDef, this.combat.enemy);
 
     // Board
     this.boardView = new BoardView(this, this.board, L.boardX, L.boardY);
 
     // Bottom HUD
-    this.hud = new PlayerHud(this, L.hudY);
+    this.hud = new PlayerHud(this, BATTLE_LAYOUT.hud.top, BATTLE_LAYOUT.hud.height, () => this.openPause());
     this.hud.setHp(this.combat.player.hp, stats.maxHp, false);
     this.hud.setXp(save.data.player.level, save.data.player.xp, progression.xpToNext());
     this.hud.setGold(save.data.player.gold);
     this.hud.setHighestRank(this.board.highestRank);
-    new Button(this, GAME_WIDTH - 62, L.hudY + 42, 'II', () => this.openPause(), { width: 84, height: 60, fontSize: 26 }).setDepth(DEPTH.hud + 1);
 
     this.floats = new FloatingText(this, 14);
 
     // Input
     this.input2 = new InputSystem(this, { onMove: (d) => this.onMove(d), onTap: (x, y) => this.onTap(x, y) });
 
-    // Hints
-    const hint = this.add.text(GAME_WIDTH / 2, L.boardY - 26, 'Swipe or use arrow keys  -  merge ninjas to strike!', textStyle(20, { color: TEXT.muted })).setOrigin(0.5).setDepth(DEPTH.hud);
-    this.time.delayedCall(4000, () => this.tweens.add({ targets: hint, alpha: 0, duration: 400 }));
+    // First-ever battle: a short control hint over the scene (fades on its own).
+    if (save.data.stats.battlesWon === 0 && save.data.stats.battlesLost === 0 && !this.enemyDef.isBoss) {
+      toast(this, 'Swipe or use arrow keys - merge ninjas to strike!', TEXT.light, 120, 3500);
+    }
     if (this.enemyDef.isBoss) this.announceBoss();
 
     if (IS_DEV) installDebugKeys(this, this.debugApi());
@@ -175,7 +175,7 @@ export class BattleScene extends Phaser.Scene {
 
     // Enemy turn
     const events = this.combat.enemyTick();
-    this.enemyView.setCounter(this.combat.enemy.counter);
+    this.enemyCard.setCounter(this.combat.enemy.counter);
     await this.playEnemyEvents(events);
     if (this.combat.playerDefeated) {
       await this.defeat();
@@ -234,7 +234,7 @@ export class BattleScene extends Phaser.Scene {
     if (best >= 4 && a.merges === 1 && !a.crit) {
       this.floats.show(GAME_WIDTH / 2, L.comboY, `${rankName(best)}!`, { size: 32, color: TEXT.light, rise: 24, duration: 900 });
     }
-    this.enemyView.setHp(this.combat.enemy.hp, this.combat.enemy.maxHp);
+    this.enemyCard.setHp(this.combat.enemy.hp, this.combat.enemy.maxHp);
     this.refreshEnemyStatus();
     await hitPromise;
   }
@@ -242,7 +242,7 @@ export class BattleScene extends Phaser.Scene {
   private showHeal(amount: number): void {
     const p = this.hud.hpBarPoint;
     this.hud.healReaction();
-    if (motion.damageNumbers) this.floats.show(p.x, p.y, `+${amount}`, { size: 40, color: TEXT.green, scaleFrom: 1.4, rise: 44 });
+    if (motion.damageNumbers) this.floats.show(p.x, p.y, `+${amount}`, { size: 36, color: TEXT.green, scaleFrom: 1.3, rise: 26 });
     this.hud.setHp(this.combat.player.hp, this.combat.player.stats.maxHp);
   }
 
@@ -255,7 +255,7 @@ export class BattleScene extends Phaser.Scene {
           await this.enemyView.attackLunge();
           this.hud.hitReaction();
           const p = this.hud.hpBarPoint;
-          if (motion.damageNumbers) this.floats.show(p.x, p.y, `-${ev.damage}`, { size: 44, color: TEXT.red, scaleFrom: 1.5, rise: 44 });
+          if (motion.damageNumbers) this.floats.show(p.x, p.y, `-${ev.damage}`, { size: 40, color: TEXT.red, scaleFrom: 1.4, rise: 26 });
           this.hud.setHp(this.combat.player.hp, this.combat.player.stats.maxHp);
           await delay(this, motion.ms(180));
           break;
@@ -263,7 +263,7 @@ export class BattleScene extends Phaser.Scene {
         case 'poisonTick': {
           audio.play('poison', { volume: 0.5 });
           const p = this.hud.hpBarPoint;
-          if (motion.damageNumbers) this.floats.show(p.x + 120, p.y, `-${ev.damage} poison`, { size: 30, color: TEXT.purple });
+          if (motion.damageNumbers) this.floats.show(p.x + 120, p.y, `-${ev.damage} poison`, { size: 26, color: TEXT.purple, rise: 26 });
           this.hud.setHp(this.combat.player.hp, this.combat.player.stats.maxHp);
           this.refreshPlayerStatus();
           break;
@@ -278,13 +278,14 @@ export class BattleScene extends Phaser.Scene {
           break;
         case 'rage':
           this.enemyView.showRage();
+          this.enemyCard.showRage();
           audio.play('alert');
           this.floats.show(GAME_WIDTH / 2, L.comboY, 'RAGE! Enemy attacks faster', { size: 34, color: TEXT.red, duration: 1400 });
           this.refreshEnemyStatus();
           break;
       }
     }
-    this.enemyView.setCounter(this.combat.enemy.counter);
+    this.enemyCard.setCounter(this.combat.enemy.counter);
     this.refreshPlayerStatus();
   }
 
@@ -325,7 +326,7 @@ export class BattleScene extends Phaser.Scene {
     if (e.shieldTurns > 0) parts.push(`Shield ${Math.round(e.shieldReduction * 100)}% (${e.shieldTurns})`);
     if (e.raging) parts.push('RAGING');
     if (this.combat.curseModifier()) parts.push('Cursed spawns');
-    this.enemyView.setStatus(parts);
+    this.enemyCard.setStatus(parts);
   }
 
   private refreshPlayerStatus(): void {
@@ -358,7 +359,7 @@ export class BattleScene extends Phaser.Scene {
       const hp = this.enemyView.hitPoint;
       if (motion.damageNumbers) this.floats.show(hp.x, hp.y, `${res.dealt}`, { size: 44, color: '#ff8a5b', scaleFrom: 1.5 });
       this.enemyView.hitReaction(false);
-      this.enemyView.setHp(this.combat.enemy.hp, this.combat.enemy.maxHp);
+      this.enemyCard.setHp(this.combat.enemy.hp, this.combat.enemy.maxHp);
     }
     this.time.delayedCall(motion.ms(220), async () => {
       this.boardView.sync(true);
@@ -497,7 +498,7 @@ export class BattleScene extends Phaser.Scene {
         const dealt = this.combat.damageEnemy(n);
         const hp = this.enemyView.hitPoint;
         this.floats.show(hp.x, hp.y, `${dealt}`, { size: 44 });
-        this.enemyView.setHp(this.combat.enemy.hp, this.combat.enemy.maxHp);
+        this.enemyCard.setHp(this.combat.enemy.hp, this.combat.enemy.maxHp);
         await this.enemyView.hitReaction(false);
         if (this.combat.enemyDefeated) await this.victory();
         else this.busy = false;
