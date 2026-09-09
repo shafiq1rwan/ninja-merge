@@ -280,8 +280,8 @@ export class EnemyStatusCard extends Phaser.GameObjects.Container {
     super(scene, 0, 0);
     this.scene2 = scene;
     this.setDepth(DEPTH.hud);
-    const width = 720 - 48;
-    const cx = 360;
+    const width = BATTLE_LAYOUT.panel.width;
+    const cx = BATTLE_LAYOUT.panel.x;
     const cy = top + height / 2;
     const left = cx - width / 2 + 16;
     const right = cx + width / 2 - 16;

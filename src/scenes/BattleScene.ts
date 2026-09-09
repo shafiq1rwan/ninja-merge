@@ -175,8 +175,8 @@ export class BattleScene extends Phaser.Scene {
     this.vfx = new CombatVFX(this, this.particles);
 
     // Top: stage title, enemy on the ground line, status card beneath the scene
-    flatPanel(this, GAME_WIDTH / 2, L.stageTitleY, 520, 48, 0x1a1008, 0.6, 12).setDepth(DEPTH.hud);
-    this.stageText = this.add.text(GAME_WIDTH / 2, L.stageTitleY, `${region.name}  -  ${this.stage.name}`, textStyle(24, { color: this.wave?.kind === 'boss' ? TEXT.red : TEXT.gold })).setOrigin(0.5).setDepth(DEPTH.hud + 1);
+    flatPanel(this, BATTLE_LAYOUT.panel.x, L.stageTitleY, BATTLE_LAYOUT.panel.width, 48, 0x1a1008, 0.6, 12).setDepth(DEPTH.hud);
+    this.stageText = this.add.text(BATTLE_LAYOUT.panel.x, L.stageTitleY, `${region.name}  -  ${this.stage.name}`, textStyle(24, { color: this.wave?.kind === 'boss' ? TEXT.red : TEXT.gold })).setOrigin(0.5).setDepth(DEPTH.hud + 1);
     this.enemyView = new EnemyView(this, BATTLE_LAYOUT.enemyX, BATTLE_LAYOUT.enemyFeetY, this.enemyDef);
     this.enemyCard = new EnemyStatusCard(this, BATTLE_LAYOUT.status.top, BATTLE_LAYOUT.status.height, this.enemyDef, this.combat.enemy);
 

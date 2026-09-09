@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { BOARD_GAP, TILE_SIZE } from '../data/battleAssets';
 import { JUICE } from '../data/juice';
 import { mergeEffects } from '../effects/MergeEffects';
 import type { ParticleEffects } from '../effects/ParticleEffects';
@@ -9,9 +10,9 @@ import type { ActivationEvent, Direction, MoveResult, Tile } from '../types';
 import { delay, tweenAsync } from '../ui/async';
 import { motion } from '../ui/motion';
 import { COLORS, DEPTH } from '../ui/theme';
-import { TILE_SIZE, TileView } from './MergeTile';
+import { TileView } from './MergeTile';
 
-export const BOARD_GAP = 12;
+export { BOARD_GAP };
 
 /**
  * Renders a BoardSystem and animates MoveResults. The logical board is the source of truth;

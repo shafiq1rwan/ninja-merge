@@ -1,12 +1,13 @@
 import Phaser from 'phaser';
 import { charFaceKey } from '../data/assets';
+import { TILE_SIZE } from '../data/battleAssets';
 import { JUICE } from '../data/juice';
 import { RANKS } from '../data/ranks';
 import { effects } from '../settings/EffectsSettings';
 import type { Tile } from '../types';
 import { COLORS, TEXT, textStyle } from '../ui/theme';
 
-export const TILE_SIZE = 140;
+export { TILE_SIZE };
 
 /**
  * Visual for one logical tile. Purely presentational - BoardView keeps it in sync with BoardSystem.

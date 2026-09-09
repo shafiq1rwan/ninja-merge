@@ -12,6 +12,13 @@
  */
 import type { RegionDef } from '../types';
 import type { DecorFrame } from './assets';
+import { BOARD } from './balance';
+
+/** Board metrics. Imported by the tile/board views so the layout has a single source of truth. */
+export const TILE_SIZE = 140;
+export const BOARD_GAP = 12;
+/** Full pixel size of the 4x4 board including its outer gaps. */
+export const BOARD_PIXEL_SIZE = BOARD.size * TILE_SIZE + (BOARD.size + 1) * BOARD_GAP;
 
 /** Named crops registered on the loaded tileset textures by PreloadScene. */
 export const BATTLE_FRAMES: DecorFrame[] = [
@@ -101,7 +108,13 @@ export const BATTLE_LAYOUT = {
   enemyMaxHeight: 210,
   comboY: 350,
   status: { top: 398, height: 110 },
-  board: { x: 50, y: 524 },
+  board: { x: 50, y: 524, size: BOARD_PIXEL_SIZE },
+  /**
+   * Shared box for the stacked panels (stage title, enemy status card, player HUD). Matching the
+   * board's left and right edges is what makes the screen read as one column instead of three
+   * differently inset strips.
+   */
+  panel: { x: 50 + BOARD_PIXEL_SIZE / 2, width: BOARD_PIXEL_SIZE },
   hud: { top: 1154, height: 114 },
 } as const;
 

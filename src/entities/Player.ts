@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { charFaceKey, HERO_CHARACTER } from '../data/assets';
+import { BATTLE_LAYOUT } from '../data/battleAssets';
 import { rankName } from '../data/ranks';
 import { effects } from '../settings/EffectsSettings';
 import { audio } from '../systems/AudioSystem';
@@ -20,8 +21,10 @@ export class PlayerHud extends Phaser.GameObjects.Container {
   private xpBar: HealthBar;
   private levelText: Phaser.GameObjects.Text;
   private goldText: Phaser.GameObjects.Text;
-  private rankText: Phaser.GameObjects.Text;
-  private statusText: Phaser.GameObjects.Text;
+  /** One line for the secondary readouts: a status takes priority over the board rank. */
+  private infoText: Phaser.GameObjects.Text;
+  private statusValue = '';
+  private rankValue = 'Rank: -';
   private portraitX: number;
   private portraitY: number;
   private hpX: number;
@@ -35,8 +38,9 @@ export class PlayerHud extends Phaser.GameObjects.Container {
   constructor(scene: Phaser.Scene, top: number, height: number, onPause: () => void) {
     super(scene, 0, 0);
     this.setDepth(DEPTH.hud);
-    const width = 720 - 48;
-    const cx = 360;
+    // Same box as the board and the enemy status card, so the column lines up.
+    const width = BATTLE_LAYOUT.panel.width;
+    const cx = BATTLE_LAYOUT.panel.x;
     const cy = top + height / 2;
     const left = cx - width / 2 + 16;
     const right = cx + width / 2 - 16;
@@ -62,7 +66,7 @@ export class PlayerHud extends Phaser.GameObjects.Container {
     const rowA = top + 32;
     const rowB = top + height - 30;
 
-    const hpW = 290;
+    const hpW = 250;
     this.hpX = colX + hpW / 2;
     this.hpY = rowA;
     this.hpBar = new HealthBar(scene, this.hpX, rowA, { width: hpW, height: 30, fillColor: COLORS.green, lowColor: COLORS.red, label: 'HP', fontSize: 18 });
@@ -76,16 +80,16 @@ export class PlayerHud extends Phaser.GameObjects.Container {
     this.xpBar = new HealthBar(scene, this.xpX, rowB, { width: xpW, height: 20, fillColor: COLORS.blue, lowColor: COLORS.blue, label: 'XP', fontSize: 14 });
     this.add(this.xpBar);
 
-    // Right column: gold + status / rank
-    this.goldX = colX + hpW + 24;
+    // Right column: gold on the top row, one secondary line under it.
+    this.goldX = colX + hpW + 22;
     this.goldY = rowA;
     const coin = scene.add.image(this.goldX + 10, rowA, 'item_GoldCoin').setScale(3);
     this.goldText = scene.add.text(this.goldX + 30, rowA, '0', textStyle(22, { color: TEXT.gold, align: 'left' })).setOrigin(0, 0.5);
     this.add([coin, this.goldText]);
-    this.rankText = scene.add.text(this.goldX, rowB, 'Rank: -', textStyle(16, { color: TEXT.muted, align: 'left', wordWrapWidth: Math.max(60, colRight - this.goldX) })).setOrigin(0, 0.5);
-    this.add(this.rankText);
-    this.statusText = scene.add.text(colRight, rowA, '', textStyle(16, { color: TEXT.purple, align: 'right' })).setOrigin(1, 0.5);
-    this.add(this.statusText);
+    this.infoText = scene.add
+      .text(this.goldX, rowB, this.rankValue, textStyle(15, { color: TEXT.muted, align: 'left', wordWrapWidth: Math.max(60, colRight - this.goldX + 16) }))
+      .setOrigin(0, 0.5);
+    this.add(this.infoText);
 
     scene.add.existing(this);
   }
@@ -114,11 +118,20 @@ export class PlayerHud extends Phaser.GameObjects.Container {
   }
 
   setHighestRank(rank: number): void {
-    this.rankText.setText(rank > 0 ? `Rank: ${rankName(rank)}` : 'Rank: -');
+    this.rankValue = rank > 0 ? `Rank: ${rankName(rank)}` : 'Rank: -';
+    this.refreshInfo();
   }
 
   setStatus(text: string): void {
-    this.statusText.setText(text);
+    this.statusValue = text;
+    this.refreshInfo();
+  }
+
+  /** A live status (poison) matters more than the board rank, so it wins the shared line. */
+  private refreshInfo(): void {
+    const showStatus = this.statusValue.length > 0;
+    this.infoText.setText(showStatus ? this.statusValue : this.rankValue);
+    this.infoText.setColor(showStatus ? TEXT.purple : TEXT.muted);
   }
 
   /** The ninja visibly swings: portrait lunges toward the enemy and flashes. */
