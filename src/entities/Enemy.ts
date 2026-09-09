@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { ANIM } from '../data/balance';
 import { BATTLE_LAYOUT } from '../data/battleAssets';
 import { JUICE } from '../data/juice';
+import type { StrengthTier } from '../data/mergeCharacters';
 import { effects } from '../settings/EffectsSettings';
 import { audio } from '../systems/AudioSystem';
 import type { EnemyState } from '../systems/CombatSystem';
@@ -70,6 +71,24 @@ export class EnemyView extends Phaser.GameObjects.Container {
     return { x: this.x, y: this.y - this.spriteHeight * 0.6 };
   }
 
+  /**
+   * Where attack techniques land: the torso for small enemies, upper-middle for tall ones.
+   * Per-enemy overrides live on the enemy definition (impactOffsetX / impactOffsetY).
+   */
+  get impactPoint(): { x: number; y: number } {
+    return {
+      x: this.x + (this.def.impactOffsetX ?? 0),
+      y: this.y + (this.def.impactOffsetY ?? -this.spriteHeight * 0.55),
+    };
+  }
+
+  /** Effect size multiplier: small enemy small effect, boss slightly larger. */
+  get impactScale(): number {
+    if (this.def.impactScale !== undefined) return this.def.impactScale;
+    if (this.def.isBoss) return 1.3;
+    return this.spriteHeight >= 140 ? 1.12 : 1;
+  }
+
   /** World point at the sprite's centre (for effects). */
   get centerPoint(): { x: number; y: number } {
     return { x: this.x, y: this.y - this.spriteHeight / 2 };
@@ -126,21 +145,23 @@ export class EnemyView extends Phaser.GameObjects.Container {
   }
 
   /**
-   * Hit reaction: brief flash, a few pixels of recoil away from the player, and a tiny shake.
-   * Bosses swap to their hit sheet for one cycle.
+   * Reaction to one landed strike: brief flash, recoil away from the player, and a small jitter.
+   * Recoil scales with the technique's strength tier, so a heavy katana reads heavier than a quick
+   * cut. Bosses swap to their hit sheet for one cycle.
    */
-  async hitReaction(crit: boolean): Promise<void> {
+  async impact(tier: StrengthTier = 'medium', crit = false): Promise<void> {
     this.idleTween?.remove();
     this.scene.tweens.killTweensOf(this.sprite);
     this.sprite.setPosition(0, 0);
-    motion.flashSprite(this.scene, this.sprite, crit ? 0xffd97a : 0xffffff, crit ? 120 : 80);
+    motion.flashSprite(this.scene, this.sprite, crit ? 0xffd97a : 0x707070, crit ? 110 : 70, crit ? 'fill' : 'add');
     if (this.hitKey && this.scene.anims.exists(this.hitKey)) {
       this.sprite.play(this.hitKey);
       this.sprite.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
         if (this.sprite.active && this.scene.anims.exists(this.idleKey)) this.sprite.play(this.idleKey);
       });
     }
-    const px = effects.px(crit ? JUICE.recoil.critPx : JUICE.recoil.px);
+    const tierPx = { light: 4, medium: JUICE.recoil.px, heavy: 7, ultimate: 9 }[tier];
+    const px = effects.px(tierPx + (crit ? 3 : 0));
     const ms = effects.ms(JUICE.recoil.ms);
     // Recoil backwards (up-screen, away from the player) with a small sideways jitter.
     await tweenAsync(this.scene, {
@@ -152,6 +173,11 @@ export class EnemyView extends Phaser.GameObjects.Container {
       ease: 'Quad.easeOut',
     });
     this.idleBob();
+  }
+
+  /** Back-compat entry point for hits that are not character techniques (tapped bomb, debug). */
+  hitReaction(crit: boolean): Promise<void> {
+    return this.impact('medium', crit);
   }
 
   /** Slash effect drawn over the enemy. */

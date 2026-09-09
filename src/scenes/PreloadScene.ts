@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_TITLE, GAME_WIDTH, SCENES } from '../config/gameConfig';
-import { assetUrl, AUDIO, DECOR_FRAMES, IMAGES, SPRITESHEETS } from '../data/assets';
+import { assetUrl, AUDIO, DECOR_FRAMES, FX_ANIMS, IMAGES, SPRITESHEETS } from '../data/assets';
 import { BATTLE_FRAMES } from '../data/battleAssets';
 import { COLORS, heading, TEXT, textStyle, titleStyle } from '../ui/theme';
 
@@ -69,5 +69,7 @@ export class PreloadScene extends Phaser.Scene {
     mk('fx_shield', 'fx_Shield', null, 8);
     mk('coin_spin', 'item_CoinAnim', null, 10);
     mk('flag_wave', 'map_flag', null, 8);
+    // Per-technique effect animations, named by convention for CombatVFX (anim_<textureKey>).
+    for (const [key, cfg] of Object.entries(FX_ANIMS)) mk(`anim_${key}`, key, null, cfg.frameRate, cfg.repeat ?? 0);
   }
 }

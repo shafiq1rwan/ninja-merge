@@ -44,6 +44,12 @@ export const JUICE = {
     windupMs: 35,
     slashMs: 70,
     impactMs: 45,
+    /** Gap between chained techniques when one swipe merges several characters. */
+    techniqueGapMs: 60,
+    /** Never hold the loop longer than this waiting for a technique's tail to finish. */
+    tailCapMs: 280,
+    /** A long chain overlaps its techniques so the whole sequence still fits in this window. */
+    chainWindowMs: 300,
   },
   /** Frame-freeze on impact, in ms. Never long enough to feel like input lag. */
   hitStop: {
@@ -138,4 +144,7 @@ export const SFX_MIX: Record<string, number> = {
   defeat: 0.8,
   button: 0.6,
   cancel: 0.5,
+  fire: 0.6,
+  energy: 0.6,
+  stealth: 0.45,
 };

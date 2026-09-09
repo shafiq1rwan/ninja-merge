@@ -70,7 +70,9 @@ export class CameraEffects {
   }
 
   private resume(): void {
-    if (!this.scene.sys || !this.scene.sys.isActive()) return;
+    // Restore unconditionally when the scene still exists: leaving timeScale at 0 would freeze the
+    // whole battle loop, which is far worse than a redundant assignment.
+    if (!this.scene?.sys) return;
     this.scene.tweens.timeScale = 1;
     this.scene.time.timeScale = 1;
   }
@@ -79,6 +81,7 @@ export class CameraEffects {
     for (const id of this.timers) window.clearTimeout(id);
     this.timers.clear();
     this.stops = 0;
+    if (!this.scene?.sys) return;
     this.scene.tweens.timeScale = 1;
     this.scene.time.timeScale = 1;
     this.scene.cameras.main?.setZoom(1);

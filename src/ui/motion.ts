@@ -29,9 +29,19 @@ export const motion = {
     if (!effects.shakeEnabled) return;
     scene.cameras.main.shake(Math.min(duration, JUICE.shake.maxMs), effects.level === 'low' ? intensity * 0.5 : intensity);
   },
-  /** Gentle tint flash on a sprite - avoids full-screen flashing. */
-  flashSprite(scene: Phaser.Scene, target: Phaser.GameObjects.Sprite | Phaser.GameObjects.Image, color = 0xffffff, duration = 90): void {
-    target.setTint(color).setTintMode(Phaser.TintModes.FILL);
+  /**
+   * Gentle tint flash on a sprite - never a full-screen flash.
+   * 'add' brightens the sprite so its silhouette and the effect over it stay readable;
+   * 'fill' blanks it to a solid colour and is reserved for critical hits.
+   */
+  flashSprite(
+    scene: Phaser.Scene,
+    target: Phaser.GameObjects.Sprite | Phaser.GameObjects.Image,
+    color = 0xffffff,
+    duration = 90,
+    mode: 'add' | 'fill' = 'fill',
+  ): void {
+    target.setTint(color).setTintMode(mode === 'add' ? Phaser.TintModes.ADD : Phaser.TintModes.FILL);
     scene.time.delayedCall(effects.reduced ? Math.min(duration, 60) : duration, () => {
       if (target.active) target.clearTint().setTintMode(Phaser.TintModes.MULTIPLY);
     });

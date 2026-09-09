@@ -105,6 +105,11 @@ export interface EnemyDef {
   goldReward: number;
   possibleDrops: DropDef[];
   isBoss?: boolean;
+  /** Where attack effects land, relative to the enemy's feet position. Defaults to the torso. */
+  impactOffsetX?: number;
+  impactOffsetY?: number;
+  /** Effect size multiplier. Defaults by sprite size (bosses get slightly larger effects). */
+  impactScale?: number;
   abilities?: BossAbility[];
   /** Music key override (bosses). */
   music?: string;

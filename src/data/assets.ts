@@ -112,6 +112,21 @@ const uiSheets: SheetAsset[] = [{ key: 'ui_Heart', path: 'ui/Heart.png', frameWi
 const fxSheets: SheetAsset[] = [
   { key: 'fx_CutX', path: 'effects/CutX.png', frameWidth: 32, frameHeight: 32 },
   { key: 'fx_SlashCurved', path: 'effects/SlashCurved.png', frameWidth: 32, frameHeight: 32 },
+  // Per-rank techniques. Frame sizes below were measured from each sheet (transparent-column
+  // analysis + visual check), so no frame bleeds into its neighbour.
+  { key: 'fx_Cut', path: 'effects/Cut.png', frameWidth: 32, frameHeight: 32 },                     // 4 frames
+  { key: 'fx_CutDouble', path: 'effects/CutDouble.png', frameWidth: 32, frameHeight: 32 },         // 5 frames
+  { key: 'fx_SlashDoubleCurved', path: 'effects/SlashDoubleCurved.png', frameWidth: 32, frameHeight: 32 }, // 4
+  { key: 'fx_CircularSlash', path: 'effects/CircularSlash.png', frameWidth: 32, frameHeight: 32 }, // 4 frames
+  { key: 'fx_SlashQuick', path: 'effects/SlashQuick.png', frameWidth: 26, frameHeight: 32 },       // 5 frames
+  { key: 'fx_SlashBig', path: 'effects/SlashBig.png', frameWidth: 66, frameHeight: 50 },           // 6 frames
+  { key: 'fx_SlashHeavy', path: 'effects/SlashHeavy.png', frameWidth: 57, frameHeight: 42 },       // 4 frames
+  { key: 'fx_SlashArc', path: 'effects/SlashArc.png', frameWidth: 38, frameHeight: 34 },           // 6 frames
+  { key: 'fx_SlashCircular', path: 'effects/SlashCircular.png', frameWidth: 63, frameHeight: 55 }, // 6 frames
+  { key: 'fx_Flam', path: 'effects/Flam.png', frameWidth: 25, frameHeight: 30 },                   // 8 frames
+  { key: 'fx_Thunder', path: 'effects/Thunder.png', frameWidth: 20, frameHeight: 28 },             // 8 frames
+  { key: 'fx_Spirit', path: 'effects/Spirit.png', frameWidth: 32, frameHeight: 32 },               // 5 frames
+  { key: 'fx_ShurikenSpin', path: 'effects/ShurikenSpin.png', frameWidth: 16, frameHeight: 16 },   // 2 frames
   { key: 'fx_Explosion', path: 'effects/Explosion.png', frameWidth: 40, frameHeight: 40 },
   { key: 'fx_Smoke', path: 'effects/Smoke.png', frameWidth: 32, frameHeight: 32 },
   { key: 'fx_Aura', path: 'effects/Aura.png', frameWidth: 25, frameHeight: 24 },
@@ -121,6 +136,32 @@ const fxSheets: SheetAsset[] = [
   { key: 'fx_Bamboo', path: 'effects/BambooParticle.png', frameWidth: 16, frameHeight: 15 },
   { key: 'fx_Snow', path: 'effects/Snow.png', frameWidth: 8, frameHeight: 8 },
 ];
+
+/**
+ * Frame rates for the effect sheets. PreloadScene registers each as `anim_<key>`, which is the
+ * naming convention CombatVFX relies on. Rates are tuned so a technique reads in 150-300ms.
+ */
+export const FX_ANIMS: Record<string, { frameRate: number; repeat?: number }> = {
+  fx_Cut: { frameRate: 26 },
+  fx_CutDouble: { frameRate: 26 },
+  fx_CutX: { frameRate: 24 },
+  fx_SlashCurved: { frameRate: 24 },
+  fx_SlashDoubleCurved: { frameRate: 24 },
+  fx_CircularSlash: { frameRate: 24 },
+  fx_SlashQuick: { frameRate: 30 },
+  fx_SlashBig: { frameRate: 24 },
+  fx_SlashHeavy: { frameRate: 20 },
+  fx_SlashArc: { frameRate: 26 },
+  fx_SlashCircular: { frameRate: 22 },
+  fx_Flam: { frameRate: 28 },
+  fx_Thunder: { frameRate: 30 },
+  fx_Spirit: { frameRate: 18 },
+  fx_ShurikenSpin: { frameRate: 20, repeat: -1 },
+  fx_Explosion: { frameRate: 16 },
+  fx_Smoke: { frameRate: 16 },
+  fx_Aura: { frameRate: 10, repeat: -1 },
+  fx_Shield: { frameRate: 8, repeat: -1 },
+};
 
 // ------------------------------------------------------------------ maps / backgrounds
 
@@ -172,6 +213,8 @@ export const SFX_KEYS = [
   'powerup', 'levelup', 'victory', 'defeat',
   // Game-feel pass: layered combat + roguelite stingers (mixed via SFX_MIX in data/juice.ts).
   'tileSlide', 'impact', 'slashHeavy', 'launch', 'enemyDeath', 'waveClear', 'bossAlert', 'bossDefeat', 'upgradePick', 'goldReward', 'sparkle',
+  // Per-archetype technique sounds.
+  'fire', 'energy', 'stealth',
 ] as const;
 export type SfxKey = (typeof SFX_KEYS)[number];
 const sfx: AudioAsset[] = SFX_KEYS.map((k) => ({ key: `sfx_${k}`, paths: [`audio/sfx/${k}.wav`] }));

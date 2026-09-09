@@ -1,19 +1,17 @@
 import Phaser from 'phaser';
 import { GAME_WIDTH } from '../config/gameConfig';
-import { getItem } from '../data/items';
 import { JUICE } from '../data/juice';
-import { RANKS } from '../data/ranks';
+import { techniqueFor } from '../data/mergeCharacters';
 import type { EnemyView } from '../entities/Enemy';
 import type { PlayerHud } from '../entities/Player';
 import { effects } from '../settings/EffectsSettings';
 import { audio } from '../systems/AudioSystem';
-import { equipment } from '../systems/EquipmentSystem';
 import { delay } from '../ui/async';
 import type { ComboIndicator } from '../ui/ComboIndicator';
-import { DEPTH, TEXT } from '../ui/theme';
+import { TEXT } from '../ui/theme';
 import type { CameraEffects } from './CameraEffects';
+import type { CombatVFX, HitInfo } from './CombatVFX';
 import type { DamageNumbers } from './DamageNumbers';
-import { mergeEffects } from './MergeEffects';
 import type { ParticleEffects } from './ParticleEffects';
 
 /**
@@ -21,7 +19,7 @@ import type { ParticleEffects } from './ParticleEffects';
  * decides how the hit *looks and sounds*. Nothing here can change damage or state.
  */
 export interface AttackReport {
-  /** One entry per merge, with the damage actually shown for it. */
+  /** One entry per merge: the rank that merged (which technique plays) and the damage shown for it. */
   hits: { rank: number; damage: number }[];
   critical: boolean;
   merges: number;
@@ -40,17 +38,17 @@ export interface CombatEffectRefs {
   camera: CameraEffects;
   numbers: DamageNumbers;
   combo: ComboIndicator;
+  vfx: CombatVFX;
   /** Y used for centre-screen shouts. */
   shoutY: number;
 }
 
 /**
- * The merge -> attack -> impact feedback chain, in one place:
+ * The merge -> technique -> impact feedback chain.
  *
- *   0ms    merge finished (caller)
- *   ~45ms  ninja winds up (portrait reacts, whoosh)
- *   ~90ms  weapon streak crosses to the enemy
- *   ~190ms impact: hit-stop, slash, recoil, flash, damage numbers, impact sound
+ * The merged character decides the attack: each merge plays its rank's ninja technique directly on
+ * the monster (see data/mergeCharacters.ts + CombatVFX). Nothing is thrown from the board or the HUD,
+ * and no character leaves its tile. Several merges in one swipe chain their techniques 60ms apart.
  */
 export class CombatEffects {
   private scene: Phaser.Scene;
@@ -61,91 +59,109 @@ export class CombatEffects {
     this.refs = refs;
   }
 
-  /** Texture for the streak that flies at the enemy, based on the equipped weapon. */
-  private weaponTexture(): string {
-    const id = equipment.equipped.weapon;
-    const icon = id ? getItem(id)?.icon : undefined;
-    return icon && this.scene.textures.exists(icon) ? icon : 'item_Sword';
+  /**
+   * Play the attack for a resolved swipe. Resolves shortly after the first strike lands, so the
+   * caller can continue while the technique's tail plays out.
+   *
+   * `onImpact` fires on the first strike - the caller drops the HP bar there.
+   */
+  async attackOccurred(report: AttackReport, onImpact?: () => void): Promise<void> {
+    const { enemy, hud, camera, combo, vfx } = this.refs;
+
+    // Combo shout goes up straight away so it overlaps the techniques rather than delaying them.
+    if (report.merges >= 2) combo.show(report.merges, report.comboMult);
+    // The player avatar acknowledges the swing. Nothing is launched from the HUD.
+    hud.attackReaction();
+
+    const target = enemy.impactPoint;
+    const targetScale = enemy.impactScale;
+    const ranks = report.hits.map((h) => h.rank);
+    const lastTechnique = ranks.length - 1;
+    let firstLanded = false;
+    let lastRecoilAt = 0;
+
+    const onHit = (info: HitInfo) => {
+      // Freeze only twice per swipe - the opening strike and the chain's closing strike. Applying
+      // hit-stop to every strike of every technique would stack into real sluggishness on a big combo.
+      const opening = info.comboIndex === 0 && info.index === 0;
+      const closing = info.comboIndex >= lastTechnique && info.last;
+      if (opening || closing) camera.hitStop(this.hitStopFor(info, report));
+      // Recoil is throttled so overlapping techniques do not restart it every few milliseconds.
+      const now = this.scene.time.now;
+      if (now - lastRecoilAt >= 55) {
+        lastRecoilAt = now;
+        void enemy.impact(info.tier, info.critical);
+      }
+      if (info.critical && opening) camera.shake(JUICE.shake.crit, 110);
+      if (!firstLanded) {
+        firstLanded = true;
+        onImpact?.();
+        this.showDamage(report, target);
+      }
+    };
+
+    // Damage with no merge (a bomb tile clearing ninjas): the board already showed the explosion,
+    // so the enemy just reacts. A normal merge never uses bomb visuals.
+    if (!ranks.length) {
+      audio.play('impact');
+      onHit({ tier: 'medium', critical: report.critical, index: 0, last: true, comboIndex: 0 });
+      await delay(this.scene, effects.ms(JUICE.attack.impactMs));
+      return;
+    }
+
+    // Chain the techniques. With many merges the gap shrinks so the whole flurry still reads as one
+    // combined attack instead of a queue of separate turns.
+    const gap = Math.min(JUICE.attack.techniqueGapMs, JUICE.attack.chainWindowMs / Math.max(1, ranks.length - 1));
+    const first = vfx.playCharacterAttack({ rank: ranks[0], critical: report.critical, comboIndex: 0, target, targetScale, onHit });
+    for (let i = 1; i < ranks.length; i++) {
+      const rank = ranks[i];
+      const at = i * effects.ms(gap);
+      this.scene.time.delayedCall(at, () => {
+        void vfx.playCharacterAttack({ rank, critical: report.critical, comboIndex: i, target, targetScale, onHit });
+      });
+    }
+
+    await first;
+    await delay(this.scene, effects.ms(this.tailMs(ranks)));
+  }
+
+  /** How long to keep the loop busy after the first strike, so the technique reads without dragging. */
+  private tailMs(ranks: number[]): number {
+    const gap = Math.min(JUICE.attack.techniqueGapMs, JUICE.attack.chainWindowMs / Math.max(1, ranks.length - 1));
+    let ms: number = JUICE.attack.impactMs;
+    ranks.forEach((rank, i) => {
+      const spec = techniqueFor(rank);
+      const after = Math.max(0, spec.hits.length - 1) * spec.hitGapMs + (spec.finisher ? spec.finisherGapMs ?? 80 : 0);
+      ms = Math.max(ms, i * gap + after + 60);
+    });
+    return Math.min(JUICE.attack.tailCapMs, ms);
+  }
+
+  private hitStopFor(info: HitInfo, report: AttackReport): number {
+    if (report.killed && info.last) return report.isBoss ? JUICE.hitStop.boss : JUICE.hitStop.kill;
+    if (info.critical) return JUICE.hitStop.crit;
+    switch (info.tier) {
+      case 'ultimate': return JUICE.hitStop.kill;
+      case 'heavy': return JUICE.hitStop.strong;
+      case 'medium': return JUICE.hitStop.normal + 8;
+      default: return JUICE.hitStop.normal;
+    }
   }
 
   /**
-   * Play a full attack. Resolves once the impact has registered, so the caller can continue
-   * immediately afterwards (it does not wait for particles or numbers to finish).
-   *
-   * `onImpact` fires on the exact impact frame - the caller uses it to drop the HP bar then, so the
-   * bar never moves before the hit connects.
+   * Damage readouts. Up to three merges read as separate numbers; beyond that they would overlap,
+   * so the swing reports one larger total (the combo indicator already says how many merges it was).
    */
-  async attackOccurred(report: AttackReport, onImpact?: () => void): Promise<void> {
-    const { enemy, hud, numbers, particles, camera, combo } = this.refs;
-    const strong = report.merges >= 2 || mergeEffects.isHigh(report.bestRank);
-
-    // Combo + rank shouts go up straight away so they overlap the swing rather than delaying it.
-    if (report.merges >= 2) combo.show(report.merges, report.comboMult);
-
-    // 1. Wind-up: the ninja visibly acts.
-    hud.attackReaction();
-    audio.play(strong ? 'slashHeavy' : 'attack', { detune: report.critical ? 120 : 0 });
-    await delay(this.scene, effects.ms(JUICE.attack.windupMs));
-
-    // 2. Weapon streak from the player HUD up to the enemy.
-    this.streak(report);
-    await delay(this.scene, effects.ms(JUICE.attack.slashMs));
-
-    // 3. Impact.
-    const hitPoint = enemy.hitPoint;
-    enemy.slashFx(report.critical);
-    camera.hitStop(report.killed ? (report.isBoss ? JUICE.hitStop.boss : JUICE.hitStop.kill) : report.critical ? JUICE.hitStop.crit : strong ? JUICE.hitStop.strong : JUICE.hitStop.normal);
-    audio.play('impact', { detune: report.critical ? 150 : strong ? 60 : 0 });
-    if (report.critical) audio.play('crit');
-    onImpact?.();
-    const recoil = enemy.hitReaction(report.critical);
-
-    particles.burst(hitPoint.x, hitPoint.y + 20, {
-      count: report.critical ? 10 : strong ? 8 : 5,
-      color: report.critical ? 0xffd97a : 0xffffff,
-      size: report.critical ? 8 : 6,
-      speed: report.critical ? 120 : 90,
-    });
-    if (report.critical) camera.shake(JUICE.shake.crit, 110);
-
-    // Damage readouts. Up to three merges read as separate numbers; beyond that they would overlap,
-    // so the swing reports one larger total (the combo indicator already says how many merges it was).
+  private showDamage(report: AttackReport, point: { x: number; y: number }): void {
+    const { numbers } = this.refs;
     if (report.hits.length <= 3) {
-      report.hits.forEach((h, i) => numbers.enemyHit(hitPoint.x, hitPoint.y, Math.round(h.damage), { crit: report.critical, index: i }));
+      report.hits.forEach((h, i) => numbers.enemyHit(point.x, point.y, Math.round(h.damage), { crit: report.critical, index: i }));
     } else {
       const total = report.hits.reduce((sum, h) => sum + h.damage, 0);
-      numbers.enemyHit(hitPoint.x, hitPoint.y, Math.round(total), { crit: report.critical, size: JUICE.damage.critSize + 6 });
+      numbers.enemyHit(point.x, point.y, Math.round(total), { crit: report.critical, size: JUICE.damage.critSize + 6 });
     }
-    if (report.bombDamage > 0) numbers.enemyHit(hitPoint.x, hitPoint.y, report.bombDamage, { index: Math.min(report.hits.length, 3), color: '#ff8a5b' });
-    if (report.critical) numbers.critTag(hitPoint.x, hitPoint.y);
-
-    await recoil;
-    await delay(this.scene, effects.ms(JUICE.attack.impactMs));
-  }
-
-  /** The weapon sprite crossing from the player to the enemy. */
-  private streak(report: AttackReport): void {
-    if (effects.reduced) return;
-    const from = this.refs.hud.portraitPoint;
-    const to = this.refs.enemy.centerPoint;
-    const tex = this.weaponTexture();
-    if (!this.scene.textures.exists(tex)) return;
-    const accent = RANKS[Math.min(report.bestRank, RANKS.length - 1)]?.accent;
-    const img = this.scene.add
-      .image(from.x, from.y, tex)
-      .setScale(report.critical ? 4 : 3.2)
-      .setDepth(DEPTH.fx)
-      .setAngle(-35);
-    if (accent && report.bestRank >= JUICE.tile.detailRank) img.setTint(accent);
-    this.scene.tweens.add({
-      targets: img,
-      x: to.x,
-      y: to.y,
-      angle: 320,
-      duration: effects.ms(JUICE.attack.slashMs + JUICE.attack.impactMs),
-      ease: 'Quad.easeIn',
-      onComplete: () => img.destroy(),
-    });
+    if (report.bombDamage > 0) numbers.enemyHit(point.x, point.y, report.bombDamage, { index: Math.min(report.hits.length, 3), color: '#ff8a5b' });
+    if (report.critical) numbers.critTag(point.x, point.y);
   }
 
   /** Enemy destroyed: strong stop, burst, dissolve. */

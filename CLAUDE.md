@@ -49,13 +49,28 @@ Logical resolution is 720x1280 portrait, `Scale.FIT` + `CENTER_BOTH`, `pixelArt:
 
 `SaveSystem.parse` runs `MIGRATIONS[fromVersion]` in sequence up to `SAVE_VERSION`, then deep-merges over `defaultSave()`. To change the save shape: bump `SAVE_VERSION`, add a migration entry, and extend `defaultSave()`. Autosave points: victory/defeat, purchase, equip/unequip/sell, upgrade, stage unlock.
 
+### Merge characters and their techniques
+
+**The merged character decides the attack.** `data/mergeCharacters.ts` is the single source of truth: one archetype per rank (name, sprite folder, tile colours, `attackType`) plus `TECHNIQUES`, a data-driven spec per attack type (lead-in cue, optional projectile, the strikes with their sheet/scale/angle/tint/offset, optional finisher, particles, sounds, strength tier). `ranks.ts` derives `RANKS` from it, so tiles, HUD and rank names follow automatically.
+
+`effects/CombatVFX.ts` renders a spec on the enemy and nothing else - it never computes damage. Rules that must hold:
+
+- Effects play **on the monster** (`EnemyView.impactPoint`, scaled by `impactScale`; both overridable per enemy via `impactOffsetX/Y` / `impactScale` on the enemy def). Nothing travels from the board or the HUD, and no board character leaves its tile.
+- **A normal merge never uses bomb or explosion visuals.** Bombs belong to the bomb tile, a boss ability or an explicit upgrade. `tests/mergeCharacters.test.ts` enforces this, that every `vfx`/`sfx` key really exists, and that each rank has its own attack type.
+- Adding or changing a technique means editing `TECHNIQUES` only. New sheets need a verified `frameWidth/frameHeight` in `data/assets.ts` (measure it - transparent-column analysis plus a zoomed look; never guess a crop) and a frame rate in `FX_ANIMS`, which PreloadScene registers as `anim_<textureKey>` - the key convention CombatVFX depends on.
+- Criticals **augment** the character's technique (bigger scale, an extra closing strike, more particles); they never swap in a generic effect.
+- Several merges in one swipe chain their techniques. The gap shrinks as the chain grows (`JUICE.attack.chainWindowMs`) so 8 merges still read as one flurry, and hit-stop fires only on the swipe's opening and closing strikes - applying it per strike stacks into real sluggishness.
+
+Measured budget: impact ~270ms after the swipe; attack sequence 361ms (1 merge) to 590ms (4 merges).
+
 ### Game feel (effects layer)
 
 Presentation is a separate layer and must stay that way: gameplay computes final numbers, then tells `effects/*` what happened. `CombatEffects.attackOccurred(report, onImpact)` owns the whole merge -> swing -> impact chain (wind-up, weapon streak, hit-stop, recoil, particles, damage numbers, combo); `onImpact` fires on the impact frame and is where the caller drops the HP bar. Never make a damage, reward or state value depend on an animation finishing.
 
 - **All timings and intensities live in `data/juice.ts`** (`JUICE`) plus the audio mix (`SFX_MIX`, applied centrally in `AudioSystem.play`). `data/balance.ts` stays gameplay-only. Budget: merge -> impact 250-450ms (currently ~325, ~220 under reduced motion), tile slide 80-130ms, hit-stop <= 90ms, shake only for crits/bombs/bosses.
 - **`settings/EffectsSettings.ts` (`effects`) is the only gate** for Reduced Motion and Effects: Low - use `effects.ms/pop/px/particles/hitStop/ambientCount/tileFlourishes` rather than reading settings directly. `ui/motion.ts` is the thin scene-facing wrapper. Both modes may remove decoration; neither may remove information (damage numbers, HP changes, merge confirmation).
-- **Pooling**: `ParticleEffects` (square motes + reward icons) and `FloatingText`/`DamageNumbers` reuse objects - never create effect objects per frame. A battle peaks around 30 live tweens; keep it there.
+- **Pooling**: `ParticleEffects` (square motes + reward icons), `CombatVFX` (effect sprites, per texture) and `FloatingText`/`DamageNumbers` reuse objects - never create effect objects per frame. A battle peaks around 35 live tweens; keep it there.
+- **The move loop cannot be locked by presentation.** `BattleScene.onMove` resolves the board first, then runs animations inside try/finally so `busy` is always released. Keep that guarantee: a thrown effect must cost a frame of polish, never the player's input.
 - **Hit-stop** sets `scene.tweens.timeScale`/`time.timeScale` to 0 and restores on a real-time timer, plus unconditionally on scene shutdown (`CameraEffects.release`) - a restarted scene must never start frozen.
 - **Banners**: waves/elites/bosses are announced by `ui/WaveBanner` *inside* BattleScene (`playIntro`), which keeps input free for normal and elite waves and only holds it for the ~1.7s boss entrance. `WaveIntroScene` is the once-per-run dungeon intro only.
 - Damage readouts show up to three separate numbers; beyond that the swing reports one total (the combo indicator carries the count) so numbers never stack.

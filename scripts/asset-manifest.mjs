@@ -14,6 +14,7 @@ const BOSS = 'Actor/Boss';
 export const characterFolders = [
   'NinjaGray', 'NinjaGreen', 'NinjaBlue', 'NinjaRed', 'NinjaYellow', 'Samurai',
   'NinjaMasked', 'NinjaDark', 'NinjaThunder', 'NinjaFire', 'NinjaMageBlack',
+  'Master', // rank 8 tile (Ninja Master)
 ];
 
 /** Monsters (16x16, 4 columns = facing direction, 4 rows = frames). [folder, sheetFile] */
@@ -113,6 +114,20 @@ entries.push(
 entries.push(
   ['FX/Attack/CutX/SpriteSheet.png', 'effects/CutX.png'],
   ['FX/Attack/SlashCurved/SpriteSheet.png', 'effects/SlashCurved.png'],
+  // Per-rank attack techniques (frame sizes verified against each sheet; see data/assets.ts).
+  ['FX/Attack/Cut/SpriteSheet.png', 'effects/Cut.png'],
+  ['FX/Attack/CutDouble/SpriteSheet.png', 'effects/CutDouble.png'],
+  ['FX/Attack/SlashDoubleCurved/SpriteSheet.png', 'effects/SlashDoubleCurved.png'],
+  ['FX/Attack/CircularSlash/SpriteSheet.png', 'effects/CircularSlash.png'],
+  ['FX/Slash/SpriteSheetSlash01.png', 'effects/SlashQuick.png'],
+  ['FX/Slash/SpriteSheetSlash02.png', 'effects/SlashBig.png'],
+  ['FX/Slash/SpriteSheetSlash03.png', 'effects/SlashHeavy.png'],
+  ['FX/Slash/SpriteSheetArc.png', 'effects/SlashArc.png'],
+  ['FX/Slash/SpriteSheetCircular.png', 'effects/SlashCircular.png'],
+  ['FX/Elemental/Flam/SpriteSheet.png', 'effects/Flam.png'],
+  ['FX/Elemental/Thunder/SpriteSheet.png', 'effects/Thunder.png'],
+  ['FX/Magic/Spirit/SpriteSheet.png', 'effects/Spirit.png'],
+  ['FX/Projectile/Shuriken.png', 'effects/ShurikenSpin.png'],
   ['FX/Elemental/Explosion/SpriteSheet.png', 'effects/Explosion.png'],
   ['FX/Smoke/Smoke/SpriteSheet.png', 'effects/Smoke.png'],
   ['FX/Magic/Aura/SpriteSheet.png', 'effects/Aura.png'],
@@ -178,6 +193,10 @@ export const sfxFiles = {
   upgradePick: 'Sounds/Bonus/PowerUp2.wav',
   goldReward: 'Sounds/Bonus/Gold1.wav',
   sparkle: 'Sounds/Bonus/Bonus3.wav',
+  // Archetype techniques.
+  fire: 'Sounds/Elemental/Fire2.wav',
+  energy: 'Sounds/Magic & Skill/Magic4.wav',
+  stealth: 'Sounds/Whoosh & Slash/Whoosh2.wav',
 };
 for (const [key, f] of Object.entries(sfxFiles)) entries.push([`Audio/${f}`, `audio/sfx/${key}.wav`]);
 

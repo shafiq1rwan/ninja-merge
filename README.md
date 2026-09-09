@@ -17,7 +17,23 @@ _Placeholder - add screenshots to `docs/screenshots/` and link them here._
 ## How it plays
 
 - **The board** is a 4x4 grid. Swipe (or press an arrow key) and every tile slides that way. Two ninjas of the same rank merge into the next rank. A tile can only merge once per move (`1 1 1 1` becomes `2 2`, never `3`).
-- **Ranks are ninja forms**, not numbers: Novice -> Apprentice -> Ninja -> Veteran Ninja -> Elite Ninja -> Samurai -> Ninja Master -> Shadow Master -> Legendary Ninja -> Shinobi Lord -> Dragon Shinobi. Each tile shows a small rank badge.
+- **Ranks are ninja archetypes, and each one fights differently.** The character you merge decides the technique that lands on the monster:
+
+| Rank | Character | Technique |
+| --- | --- | --- |
+| 1 | Novice Ninja | single diagonal slash |
+| 2 | Apprentice | mirrored slash |
+| 3 | Assassin | two fast cuts |
+| 4 | Shuriken Ninja | thrown shuriken |
+| 5 | Fire Ninja | flame burst |
+| 6 | Shadow Ninja | smoke, then a dark X-slash |
+| 7 | Samurai | one heavy katana arc |
+| 8 | Ninja Master | four rapid cuts |
+| 9 | Thunder Ninja | lightning strike |
+| 10 | Shinobi Lord | shadow flurry with a curved finisher |
+| 11 | Dragon Shinobi | apparition, circular slash, heavy finish |
+
+  Criticals make the same technique bigger rather than swapping in a generic effect, and several merges in one swipe chain their techniques together. Each tile shows a small rank badge; ranks 4+ gain accent pips, 7+ a sparkle and 10+ a pulsing outline.
 - **Every merge damages the enemy.** Bigger merges hit harder (damage table in `src/data/balance.ts`). Several merges in one swipe trigger a **COMBO** multiplier; there is a chance of a **CRITICAL** hit. The swipe reads as one chain: tiles slide and compress, the merged ninja pops, your ninja swings, the blade crosses the screen, the hit lands with a brief freeze, and the damage number and HP bar move together (~325ms from swipe to impact).
 - **Enemies attack on a counter** ("Enemy attack in: 2"). Different enemies attack at different speeds, so you can plan combos around it.
 - **Special tiles**: a **Potion** heals you and a **Bomb** clears the surrounding cells (and damages the enemy). Push one against the board edge, or tap it, to activate. They never merge with ninjas.

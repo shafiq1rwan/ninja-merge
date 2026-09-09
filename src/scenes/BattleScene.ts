@@ -10,6 +10,7 @@ import { getRegion, getStage, REGIONS } from '../data/stages';
 import { installDebugKeys } from '../debug/DebugKeys';
 import { CameraEffects } from '../effects/CameraEffects';
 import { CombatEffects, type AttackReport } from '../effects/CombatEffects';
+import { CombatVFX } from '../effects/CombatVFX';
 import { DamageNumbers } from '../effects/DamageNumbers';
 import { mergeEffects } from '../effects/MergeEffects';
 import { ParticleEffects } from '../effects/ParticleEffects';
@@ -112,6 +113,7 @@ export class BattleScene extends Phaser.Scene {
   private cameraFx!: CameraEffects;
   private numbers!: DamageNumbers;
   private combo!: ComboIndicator;
+  private vfx!: CombatVFX;
   private fx!: CombatEffects;
   private rewards!: RewardEffects;
 
@@ -170,6 +172,7 @@ export class BattleScene extends Phaser.Scene {
     this.cameraFx = new CameraEffects(this);
     this.numbers = new DamageNumbers(this, 16);
     this.combo = new ComboIndicator(this, L.comboY);
+    this.vfx = new CombatVFX(this, this.particles);
 
     // Top: stage title, enemy on the ground line, status card beneath the scene
     flatPanel(this, GAME_WIDTH / 2, L.stageTitleY, 520, 48, 0x1a1008, 0.6, 12).setDepth(DEPTH.hud);
@@ -194,6 +197,7 @@ export class BattleScene extends Phaser.Scene {
       camera: this.cameraFx,
       numbers: this.numbers,
       combo: this.combo,
+      vfx: this.vfx,
       shoutY: L.comboY,
     });
     this.rewards = new RewardEffects(this, this.particles);
@@ -278,36 +282,45 @@ ${BattleScene.describeAbility(ability.type)}` : this.enemyDef.name,
     const attack = this.combat.resolvePlayerMove(result);
     this.trackStats(result.merges.length, attack, result.activations);
 
-    await this.boardView.animateMove(result);
-    this.hud.setHighestRank(this.board.highestRank);
-    this.announceRanks();
+    try {
+      await this.boardView.animateMove(result);
+      this.hud.setHighestRank(this.board.highestRank);
+      this.announceRanks();
 
-    if (attack.merges > 0 || attack.bombDamage > 0) await this.showAttack(attack);
-    if (attack.healed > 0) this.showHeal(attack.healed);
+      if (attack.merges > 0 || attack.bombDamage > 0) await this.showAttack(attack);
+      if (attack.healed > 0) this.showHeal(attack.healed);
 
-    if (this.combat.enemyDefeated) {
-      await this.victory();
-      return;
-    }
+      if (this.combat.enemyDefeated) {
+        await this.victory();
+        return;
+      }
 
-    // Enemy turn
-    const events = this.combat.enemyTick();
-    this.enemyCard.setCounter(this.combat.enemy.counter);
-    await this.playEnemyEvents(events);
-    if (this.combat.playerDefeated) {
-      await this.defeat();
-      return;
-    }
-
-    // Stuck board -> penalty instead of game over.
-    if (this.board.isBlocked()) {
-      await this.boardBlockedPenalty();
+      // Enemy turn
+      const events = this.combat.enemyTick();
+      this.enemyCard.setCounter(this.combat.enemy.counter);
+      await this.playEnemyEvents(events);
       if (this.combat.playerDefeated) {
         await this.defeat();
         return;
       }
+
+      // Stuck board -> penalty instead of game over.
+      if (this.board.isBlocked()) {
+        await this.boardBlockedPenalty();
+        if (this.combat.playerDefeated) {
+          await this.defeat();
+          return;
+        }
+      }
+    } catch (err) {
+      // Presentation must never be able to lock the board: log it and hand control back. The board
+      // state itself is already correct - the move was resolved before any animation ran.
+      console.warn('[Battle] move presentation failed', err);
+      this.boardView.sync(false);
+    } finally {
+      // `ended` paths (victory / defeat) deliberately keep input disabled while the scene changes.
+      if (!this.ended) this.busy = false;
     }
-    this.busy = false;
   }
 
   private trackStats(merges: number, attack: AttackBreakdown, activations: ActivationEvent[]): void {
@@ -497,12 +510,17 @@ ${BattleScene.describeAbility(ability.type)}` : this.enemyDef.name,
       this.enemyCard.setHp(this.combat.enemy.hp, this.combat.enemy.maxHp);
     }
     this.time.delayedCall(effects.ms(220), async () => {
-      this.boardView.sync(true);
-      if (this.combat.enemyDefeated) {
-        await this.victory();
-        return;
+      try {
+        this.boardView.sync(true);
+        if (this.combat.enemyDefeated) {
+          await this.victory();
+          return;
+        }
+      } catch (err) {
+        console.warn('[Battle] special tile presentation failed', err);
+      } finally {
+        if (!this.ended) this.busy = false;
       }
-      this.busy = false;
     });
   }
 
