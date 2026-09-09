@@ -1,0 +1,25 @@
+{
+  "name": "ninja-merge-rpg",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Ninja Merge RPG - a 2048-style merge puzzle fused with a lightweight ninja RPG. Built with Phaser 4 + TypeScript + Vite.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "import-assets": "node scripts/import-assets.mjs",
+    "convert-audio": "node scripts/convert-audio.mjs"
+  },
+  "dependencies": {
+    "phaser": "^4.2.1"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.2",
+    "vite": "^7.1.0",
+    "vitest": "^3.2.4"
+  }
+}

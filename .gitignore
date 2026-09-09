@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.vite/
+
+# The raw Ninja Adventure asset pack is the *source* for public/assets (see scripts/import-assets.mjs).
+# Only the curated, imported copies under public/assets are committed.
+Ninja Adventure - Asset Pack/
